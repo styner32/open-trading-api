@@ -94,6 +94,7 @@ ENV/
 env/
 env.bak/
 venv.bak/
+go/.auth_token.json
 
 # ===== uv =====
 .python-version
@@ -176,3 +177,6 @@ backtester/examples/output/*.py
 settings.local.json
 
 .serena/
+*_logs/
+
+kis_devlp.yaml
