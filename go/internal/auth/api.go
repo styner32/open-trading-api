@@ -121,7 +121,7 @@ func (client *KIClient) doWithRetry(
 		req.Header.Set(key, value)
 	}
 
-	resp, err := client.Client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

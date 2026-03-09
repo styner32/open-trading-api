@@ -84,5 +84,12 @@ var _ = Describe("KIClient GET", func() {
 		Expect(requests[2].Method).To(Equal(http.MethodGet))
 		Expect(requests[2].URL).To(Equal("https://example.test/uapi/test"))
 		Expect(requests[2].Headers.Get("Authorization")).To(Equal("Bearer refreshed-token"))
+
+		metrics := client.MetricsSnapshot()
+		Expect(metrics.CallCount).To(Equal(3))
+		Expect(metrics.SuccessCount).To(Equal(3))
+		Expect(metrics.ErrorCount).To(Equal(0))
+		Expect(metrics.TotalDuration).To(BeNumerically(">=", 0))
+		Expect(metrics.RPM).To(BeNumerically(">=", 0))
 	})
 })

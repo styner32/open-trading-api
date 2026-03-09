@@ -95,6 +95,7 @@ env/
 env.bak/
 venv.bak/
 go/.auth_token.json
+go/.cache/
 
 # ===== uv =====
 .python-version
@@ -180,3 +181,5 @@ settings.local.json
 *_logs/
 
 kis_devlp.yaml
+
+.DS_Store

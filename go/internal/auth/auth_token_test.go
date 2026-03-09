@@ -37,5 +37,10 @@ var _ = Describe("KIClient EnsureAuthToken", func() {
 		Expect(token.AccessToken).To(Equal("cached-token"))
 		Expect(client.AuthToken).To(Equal("cached-token"))
 		Expect(transport.Requests()).To(BeEmpty())
+
+		metrics := client.MetricsSnapshot()
+		Expect(metrics.CallCount).To(Equal(0))
+		Expect(metrics.SuccessCount).To(Equal(0))
+		Expect(metrics.ErrorCount).To(Equal(0))
 	})
 })

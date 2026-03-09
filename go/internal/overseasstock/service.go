@@ -16,11 +16,17 @@ import (
 )
 
 const (
-	pricePath              = "/uapi/overseas-price/v1/quotations/price"
-	priceTRID              = "HHDFS00000300"
-	ewyExchangeCodeEnvKey  = "EWY_EXCD"
-	defaultEWYSymbol       = "EWY"
-	defaultUSMasterBaseURL = "https://new.real.download.dws.co.kr/common/master/%smst.cod.zip"
+	pricePath               = "/uapi/overseas-price/v1/quotations/price"
+	dailyChartPricePath     = "/uapi/overseas-price/v1/quotations/inquire-daily-chartprice"
+	timeIndexChartPricePath = "/uapi/overseas-price/v1/quotations/inquire-time-indexchartprice"
+	priceTRID               = "HHDFS00000300"
+	dailyChartPriceTRID     = "FHKST03030100"
+	timeIndexChartPriceTRID = "FHKST03030200"
+	ewyExchangeCodeEnvKey   = "EWY_EXCD"
+	defaultEWYSymbol        = "EWY"
+	defaultUSMasterBaseURL  = "https://new.real.download.dws.co.kr/common/master/%smst.cod.zip"
+	defaultExchangeRateCode = "USDKRW"
+	defaultExchangeRateDiv  = "X"
 )
 
 type Service struct {
@@ -67,6 +73,79 @@ func (s *Service) Price(ctx context.Context, exchangeCode string, symbol string)
 	}
 
 	return s.client.Get(ctx, pricePath, priceTRID, "", params)
+}
+
+func (s *Service) InquireDailyChartPrice(
+	ctx context.Context,
+	marketDivCode string,
+	inputISCD string,
+	fromDate string,
+	toDate string,
+	periodDivCode string,
+) (*auth.RESTResponse, error) {
+	marketDivCode = strings.TrimSpace(marketDivCode)
+	inputISCD = strings.TrimSpace(inputISCD)
+	fromDate = strings.TrimSpace(fromDate)
+	toDate = strings.TrimSpace(toDate)
+	periodDivCode = strings.TrimSpace(periodDivCode)
+
+	if marketDivCode == "" {
+		return nil, errors.New("marketDivCode is required")
+	}
+	if inputISCD == "" {
+		return nil, errors.New("inputISCD is required")
+	}
+	if fromDate == "" || toDate == "" {
+		return nil, errors.New("fromDate and toDate are required")
+	}
+	if periodDivCode == "" {
+		periodDivCode = "D"
+	}
+
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": marketDivCode,
+		"FID_INPUT_ISCD":         inputISCD,
+		"FID_INPUT_DATE_1":       fromDate,
+		"FID_INPUT_DATE_2":       toDate,
+		"FID_PERIOD_DIV_CODE":    periodDivCode,
+	}
+
+	return s.client.Get(ctx, dailyChartPricePath, dailyChartPriceTRID, "", params)
+}
+
+func (s *Service) InquireTimeIndexChartPrice(
+	ctx context.Context,
+	marketDivCode string,
+	inputISCD string,
+	hourClsCode string,
+	includePastData string,
+) (*auth.RESTResponse, error) {
+	marketDivCode = strings.TrimSpace(marketDivCode)
+	inputISCD = strings.TrimSpace(inputISCD)
+	hourClsCode = strings.TrimSpace(hourClsCode)
+	includePastData = strings.TrimSpace(includePastData)
+
+	if marketDivCode == "" {
+		return nil, errors.New("marketDivCode is required")
+	}
+	if inputISCD == "" {
+		return nil, errors.New("inputISCD is required")
+	}
+	if hourClsCode == "" {
+		hourClsCode = "0"
+	}
+	if includePastData == "" {
+		includePastData = "Y"
+	}
+
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": marketDivCode,
+		"FID_INPUT_ISCD":         inputISCD,
+		"FID_HOUR_CLS_CODE":      hourClsCode,
+		"FID_PW_DATA_INCU_YN":    includePastData,
+	}
+
+	return s.client.Get(ctx, timeIndexChartPricePath, timeIndexChartPriceTRID, "", params)
 }
 
 func (s *Service) ResolveEWYExchangeCode(ctx context.Context) (string, error) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,8 +26,10 @@ func main() {
 	baseURL := "https://openapi.koreainvestment.com:9443"
 	tokenCachePath := getOrDefault("AUTH_TOKEN_FILE", ".auth_token.json")
 	targetSymbol := getOrDefault("TARGET_SYMBOL", "005930")
-	//	crudeOilProductCode := getOrDefault("CRUDE_OIL_PRODUCT_CODE", "CL")
+	kospiProxyTargetCoverage := getFloatOrDefault("KOSPI_PROXY_PBR_TARGET_COVERAGE", 0.80)
 	ewySymbol := getOrDefault("EWY_SYMBOL", "EWY")
+	exchangeRateMarketDivCode := getOrDefault("EXCHANGE_RATE_MARKET_DIV_CODE", "X")
+	exchangeRateSymbol := getOrDefault("EXCHANGE_RATE_SYMBOL", "USDKRW")
 
 	client := auth.NewKIClient(appKey, secretKey, baseURL, userAgent)
 	client.SetTokenCachePath(tokenCachePath)
@@ -45,18 +48,21 @@ func main() {
 	printUsefulEndpoints()
 
 	svc := domesticstock.NewService(client)
-	//	overseasFutureSvc := overseasfuture.NewService(client)
 	overseasStockSvc := overseasstock.NewService(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
+	pbrCtx, pbrCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer pbrCancel()
 
 	today := time.Now().Format("20060102")
 	fromDate := time.Now().AddDate(0, -6, 0).Format("20060102")
+	exchangeRateFromDate := time.Now().AddDate(0, 0, -14).Format("20060102")
 
 	respMarketTime, err := svc.MarketTime(ctx)
 	mustAPIResult("market-time", respMarketTime, err, "output1")
 	printMarketTimeSummary(respMarketTime)
+	businessDate := resolveBusinessDateFromMarketTime(respMarketTime, today)
 
 	respKOSPI, err := svc.InquireIndexPrice(ctx, "0001")
 	mustAPIResult("inquire-index-price (KOSPI 0001)", respKOSPI, err, "output")
@@ -65,6 +71,12 @@ func main() {
 	respKOSDAQ, err := svc.InquireIndexPrice(ctx, "1001")
 	mustAPIResult("inquire-index-price (KOSDAQ 1001)", respKOSDAQ, err, "output")
 	printIndexSummary("KOSDAQ", respKOSDAQ)
+
+	kospiActualPBR, err := svc.KOSPIActualPBR(pbrCtx, kospiProxyTargetCoverage, businessDate)
+	if err != nil {
+		log.Fatalf("KOSPI actual PBR error: %v", err)
+	}
+	printKOSPIActualPBRSummary(kospiActualPBR)
 
 	vkospiCode, err := svc.ResolveVKOSPICode(ctx, nil)
 	if err != nil {
@@ -78,26 +90,13 @@ func main() {
 	mustAPIResult("comp-program-trade-today (KOSPI)", respProgramTrade, err, "output")
 	printProgramTradeSummary(respProgramTrade)
 
-	respVI, err := svc.InquireVIStatus(ctx, today)
+	respVI, err := svc.InquireVIStatus(ctx, businessDate)
 	mustAPIResult("inquire-vi-status", respVI, err, "output")
 	printVISummary(respVI)
 
 	respFunds, err := svc.MarketFunds(ctx, "")
 	mustAPIResult("mktfunds", respFunds, err, "output")
 	printMarketFundsSummary(respFunds)
-
-	// crudeOilSeriesCode, err := overseasFutureSvc.ResolveCrudeOilSeriesCode(ctx)
-	// if err != nil {
-	// 	log.Fatalf("crude oil series code resolve error: %v", err)
-	// }
-	// respCrudeOil, err := overseasFutureSvc.InquirePrice(ctx, crudeOilSeriesCode)
-	// mustAPIResult(
-	// 	"overseas-future inquire-price ("+crudeOilProductCode+" "+crudeOilSeriesCode+")",
-	// 	respCrudeOil,
-	// 	err,
-	// 	"output1",
-	// )
-	// printOverseasFutureSummary("Crude Oil Future", respCrudeOil)
 
 	ewyExchangeCode, err := overseasStockSvc.ResolveEWYExchangeCode(ctx)
 	if err != nil {
@@ -112,6 +111,22 @@ func main() {
 	)
 	printOverseasStockSummary("EWY", respEWY)
 
+	respExchangeRate, err := overseasStockSvc.InquireDailyChartPrice(
+		ctx,
+		exchangeRateMarketDivCode,
+		exchangeRateSymbol,
+		exchangeRateFromDate,
+		today,
+		"D",
+	)
+	mustAPIResult(
+		"exchange-rate daily-chart ("+exchangeRateMarketDivCode+" "+exchangeRateSymbol+")",
+		respExchangeRate,
+		err,
+		"output1",
+	)
+	printExchangeRateSummary(exchangeRateMarketDivCode, exchangeRateSymbol, respExchangeRate)
+
 	rsiResult, err := svc.RSIFromDailyChart(ctx, targetSymbol, 14, fromDate, today)
 	if err != nil {
 		log.Fatalf("RSI calculation error: %v", err)
@@ -123,6 +138,8 @@ func main() {
 	fmt.Printf("RSI: %.2f\n", rsiResult.Last)
 	fmt.Printf("Signal: %s\n", rsiResult.Signal)
 	fmt.Printf("------------------\n")
+
+	printClientMetricsSummary(client.MetricsSnapshot())
 }
 
 func printUsefulEndpoints() {
@@ -215,6 +232,19 @@ func getOrDefault(key string, defaultValue string) string {
 	return value
 }
 
+func getFloatOrDefault(key string, defaultValue float64) float64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		log.Fatalf("%s must be a float: %v", key, err)
+	}
+	return parsed
+}
+
 func printMarketTimeSummary(resp *auth.RESTResponse) {
 	row := firstRow(resp, "output1")
 	if row == nil {
@@ -237,6 +267,61 @@ func printMarketTimeSummary(resp *auth.RESTResponse) {
 	})
 }
 
+func resolveBusinessDateFromMarketTime(resp *auth.RESTResponse, fallback string) string {
+	if strings.TrimSpace(fallback) == "" {
+		fallback = time.Now().Format("20060102")
+	}
+
+	row := firstRow(resp, "output1")
+	if row == nil {
+		return fallback
+	}
+
+	today := normalizeYMD(fieldString(row, "today"))
+	dates := []string{
+		normalizeYMD(fieldString(row, "date1")),
+		normalizeYMD(fieldString(row, "date2")),
+		normalizeYMD(fieldString(row, "date3")),
+		normalizeYMD(fieldString(row, "date4")),
+		normalizeYMD(fieldString(row, "date5")),
+	}
+
+	if today != "" {
+		for _, date := range dates {
+			if date == today {
+				return today
+			}
+		}
+
+		latest := ""
+		for _, date := range dates {
+			if date == "" {
+				continue
+			}
+			if date <= today && date > latest {
+				latest = date
+			}
+		}
+		if latest != "" {
+			return latest
+		}
+
+		return today
+	}
+
+	latest := ""
+	for _, date := range dates {
+		if date > latest {
+			latest = date
+		}
+	}
+	if latest != "" {
+		return latest
+	}
+
+	return fallback
+}
+
 func printIndexSummary(name string, resp *auth.RESTResponse) {
 	row := firstRow(resp, "output")
 	if row == nil {
@@ -255,6 +340,53 @@ func printIndexSummary(name string, resp *auth.RESTResponse) {
 		formatSummaryLine("Volume", firstNonEmpty(row, "acml_vol")),
 		formatSummaryLine("Turnover", firstNonEmpty(row, "acml_tr_pbmn")),
 	})
+}
+
+func printKOSPIActualPBRSummary(result *domesticstock.ActualPBRResult) {
+	if result == nil {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Method", result.Method),
+		formatSummaryLine("Weighted PBR", formatFloat(result.WeightedPBR)),
+		formatSummaryLine("Target Coverage", formatPercent(result.TargetCoverage)),
+		formatSummaryLine("Used Coverage", formatPercent(result.UsedCoverage)),
+		formatSummaryLine("Raw Coverage", formatPercent(result.RawCoverage)),
+		formatSummaryLine("Selected / Used / Skipped", fmt.Sprintf("%d / %d / %d", result.SelectedCount, result.UsedCount, result.SkippedCount)),
+		formatSummaryLine("Cache Hit / API Call", fmt.Sprintf("%d / %d", result.CacheHitCount, result.APICallCount)),
+		formatSummaryLine("Market Cap Used", formatFloat(result.UsedMarketCap)),
+		formatSummaryLine("Book Value Used", formatFloat(result.AggregateBookValue)),
+		formatSummaryLine("Business Date", result.BusinessDate),
+		formatSummaryLine("Actual PBR Cache", result.ActualPBRCachePath),
+		formatSummaryLine("Master Cache", result.MasterCachePath),
+		formatSummaryLine("Master JSON", result.MasterJSONPath),
+		formatSummaryLine("Master Load", result.MasterLoadTime.String()),
+		formatSummaryLine("Cache Load", result.CacheLoadTime.String()),
+		formatSummaryLine("Rate Limit Wait", result.RateLimitWaitTime.String()),
+		formatSummaryLine("Price Fetch", result.PriceFetchTime.String()),
+		formatSummaryLine("Cache Save", result.CacheSaveTime.String()),
+		formatSummaryLine("Total Time", result.TotalDuration.String()),
+	}
+
+	for i, constituent := range result.Constituents {
+		if i >= 5 {
+			break
+		}
+		lines = append(lines, formatSummaryLine(
+			fmt.Sprintf("Top %d", i+1),
+			fmt.Sprintf("%s %s | cap=%s | pbr=%s | weight=%s | %s",
+				constituent.Code,
+				constituent.Name,
+				formatFloat(constituent.MarketCap),
+				formatFloat(constituent.PBR),
+				formatPercent(constituent.Coverage),
+				cacheLabel(constituent.CacheHit),
+			),
+		))
+	}
+
+	printSummaryBlock("KOSPI Actual PBR Summary", lines)
 }
 
 func printProgramTradeSummary(resp *auth.RESTResponse) {
@@ -362,6 +494,48 @@ func printOverseasStockSummary(name string, resp *auth.RESTResponse) {
 	})
 }
 
+func printExchangeRateSummary(marketDivCode string, symbol string, resp *auth.RESTResponse) {
+	row := firstRow(resp, "output1")
+	if row == nil {
+		return
+	}
+
+	printSummaryBlock("Exchange Rate Summary", []string{
+		formatSummaryLine("Market / Symbol", joinNonEmpty(" / ", marketDivCode, symbol)),
+		formatSummaryLine("Name", firstNonEmpty(row, "hts_kor_isnm")),
+		formatSummaryLine("Current", firstNonEmpty(row, "ovrs_nmix_prpr")),
+		formatSummaryLine("Change", firstNonEmpty(row, "ovrs_nmix_prdy_vrss")),
+		formatSummaryLine("Rate", firstNonEmpty(row, "prdy_ctrt")),
+		formatSummaryLine("Previous Close", firstNonEmpty(row, "ovrs_nmix_prdy_clpr")),
+		formatSummaryLine("Open / High / Low", joinNonEmpty(" / ",
+			firstNonEmpty(row, "ovrs_nmix_oprc", "ovrs_prod_oprc"),
+			firstNonEmpty(row, "ovrs_nmix_hgpr", "ovrs_prod_hgpr"),
+			firstNonEmpty(row, "ovrs_nmix_lwpr", "ovrs_prod_lwpr"),
+		)),
+		formatSummaryLine("Volume", firstNonEmpty(row, "acml_vol")),
+	})
+}
+
+func printClientMetricsSummary(metrics auth.HTTPMetricsSnapshot) {
+	lines := []string{
+		formatSummaryLine("Call Count", strconv.Itoa(metrics.CallCount)),
+		formatSummaryLine("Success / Error", fmt.Sprintf("%d / %d", metrics.SuccessCount, metrics.ErrorCount)),
+		formatSummaryLine("Total Time", metrics.TotalDuration.String()),
+		formatSummaryLine("Average Time", metrics.AverageTime.String()),
+		formatSummaryLine("Elapsed", metrics.Elapsed.String()),
+		formatSummaryLine("RPM", formatFloat(metrics.RPM)),
+	}
+
+	if !metrics.StartedAt.IsZero() {
+		lines = append(lines, formatSummaryLine("Started At", metrics.StartedAt.Format(time.RFC3339)))
+	}
+	if !metrics.LastCallAt.IsZero() {
+		lines = append(lines, formatSummaryLine("Last Call At", metrics.LastCallAt.Format(time.RFC3339)))
+	}
+
+	printSummaryBlock("KIClient Metrics", lines)
+}
+
 func printSummaryBlock(title string, lines []string) {
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -446,6 +620,19 @@ func fieldString(row map[string]any, key string) string {
 	return strings.TrimSpace(fmt.Sprintf("%v", value))
 }
 
+func normalizeYMD(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) != 8 {
+		return ""
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return value
+}
+
 func joinNonEmpty(sep string, parts ...string) string {
 	filtered := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -456,4 +643,19 @@ func joinNonEmpty(sep string, parts ...string) string {
 		filtered = append(filtered, part)
 	}
 	return strings.Join(filtered, sep)
+}
+
+func formatFloat(value float64) string {
+	return fmt.Sprintf("%.2f", value)
+}
+
+func formatPercent(value float64) string {
+	return fmt.Sprintf("%.2f%%", value*100)
+}
+
+func cacheLabel(cacheHit bool) string {
+	if cacheHit {
+		return "cache"
+	}
+	return "api"
 }

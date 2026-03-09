@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,8 @@ type KIClient struct {
 	AuthToken      string
 	TokenCachePath string
 	Client         *http.Client
+	metricsMu      sync.Mutex
+	metrics        httpCallMetrics
 }
 
 // Config represents the structure of ~/KIS/config/kis_devlp.yaml
@@ -116,7 +119,7 @@ func (client *KIClient) GetAuthTokenWithContext(ctx context.Context) (*TokenResp
 	req.Header.Set("Accept", "text/plain")
 	req.Header.Set("User-Agent", client.UserAgent)
 
-	resp, err := client.Client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}
