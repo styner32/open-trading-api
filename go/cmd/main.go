@@ -11,6 +11,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/dcf"
 	"github.com/kis-open-api/go/internal/domesticstock"
 	"github.com/kis-open-api/go/internal/overseasstock"
 )
@@ -139,6 +140,52 @@ func main() {
 	fmt.Printf("Signal: %s\n", rsiResult.Signal)
 	fmt.Printf("------------------\n")
 
+	dcfReadiness, err := svc.DCFReadiness(ctx, targetSymbol, "0")
+	if err != nil {
+		log.Fatalf("DCF readiness error: %v", err)
+	}
+	printDCFReadinessSummary(dcfReadiness)
+
+	dcfValuation, err := svc.DCFValuation(ctx, targetSymbol, domesticstock.DCFValuationOptions{})
+	if err != nil {
+		log.Fatalf("DCF valuation error: %v", err)
+	}
+	printDCFValuationSummary(dcfValuation)
+
+	if dcfValuation.CurrentPrice <= 0 {
+		log.Fatalf("reverse DCF error: current price missing")
+	}
+	reverseDCFResult, err := dcf.ReverseDCF(
+		dcfValuation.Financial,
+		dcfValuation.Market,
+		dcfValuation.Assumptions,
+		dcfValuation.Projection,
+		dcfValuation.CurrentPrice,
+		dcf.ReverseDCFConfig{},
+	)
+	if err != nil {
+		log.Fatalf("reverse DCF error: %v", err)
+	}
+	printReverseDCFSummary(reverseDCFResult)
+
+	monteCarloResult, err := dcf.MonteCarlo(
+		dcfValuation.Financial,
+		dcfValuation.Market,
+		dcfValuation.Assumptions,
+		dcfValuation.Projection,
+		dcf.MonteCarloConfig{
+			Iterations:           getIntOrDefault("DCF_MONTE_CARLO_ITERATIONS", 2000),
+			Workers:              getIntOrDefault("DCF_MONTE_CARLO_WORKERS", 0),
+			RevenueGrowthStdDev:  getFloatOrDefault("DCF_MONTE_CARLO_GROWTH_STDDEV", 0.02),
+			WACCStdDev:           getFloatOrDefault("DCF_MONTE_CARLO_WACC_STDDEV", 0.01),
+			TerminalGrowthStdDev: getFloatOrDefault("DCF_MONTE_CARLO_TERMINAL_STDDEV", 0.005),
+		},
+	)
+	if err != nil {
+		log.Fatalf("monte carlo DCF error: %v", err)
+	}
+	printMonteCarloSummary(monteCarloResult)
+
 	printClientMetricsSummary(client.MetricsSnapshot())
 }
 
@@ -163,6 +210,11 @@ func printUsefulEndpoints() {
 		{"/uapi/domestic-stock/v1/quotations/inquire-vi-status", "VI 발동 현황"},
 		{"/uapi/domestic-stock/v1/quotations/mktfunds", "증시자금 종합"},
 		{"/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", "RSI/기술지표 원천(OHLCV)"},
+		{"/uapi/domestic-stock/v1/finance/balance-sheet", "DCF용 자산/부채/자본 구조"},
+		{"/uapi/domestic-stock/v1/finance/income-statement", "DCF용 매출/영업이익/감가상각"},
+		{"/uapi/domestic-stock/v1/finance/other-major-ratios", "DCF용 EBITDA/EV-EBITDA proxy"},
+		{"/uapi/domestic-stock/v1/finance/stability-ratio", "DCF용 차입금의존도 proxy"},
+		{"/uapi/domestic-stock/v1/quotations/comp-interest", "DCF용 무위험금리(국내채권 금리)"},
 		{"/uapi/domestic-stock/v1/quotations/inquire-time-itemconclusion", "종목 체결 시계열(초단위)"},
 		{"/uapi/domestic-stock/v1/quotations/pbar-tratio", "매물대/거래비중"},
 		{"/uapi/domestic-stock/v1/quotations/tradprt-byamt", "체결금액대별 매매비중"},
@@ -241,6 +293,19 @@ func getFloatOrDefault(key string, defaultValue float64) float64 {
 	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil {
 		log.Fatalf("%s must be a float: %v", key, err)
+	}
+	return parsed
+}
+
+func getIntOrDefault(key string, defaultValue int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		log.Fatalf("%s must be an integer: %v", key, err)
 	}
 	return parsed
 }
@@ -387,6 +452,137 @@ func printKOSPIActualPBRSummary(result *domesticstock.ActualPBRResult) {
 	}
 
 	printSummaryBlock("KOSPI Actual PBR Summary", lines)
+}
+
+func printDCFReadinessSummary(result *domesticstock.DCFReadinessResult) {
+	if result == nil {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Symbol", result.Symbol),
+		formatSummaryLine("Division", result.Division),
+		formatSummaryLine("Balance / Income Periods", fmt.Sprintf("%d / %d", result.BalancePeriods, result.IncomePeriods)),
+		formatSummaryLine("Can Project FCF", formatBool(result.CanProjectFCF)),
+		formatSummaryLine("Can Compute WACC", formatBool(result.CanComputeWACC)),
+		formatSummaryLine("Can Compute EV", formatBool(result.CanComputeEnterpriseValue)),
+		formatSummaryLine("Can Compute Target Price", formatBool(result.CanComputeTargetPrice)),
+		formatSummaryLine("Missing For FCF", strings.Join(result.MissingForFCF, ", ")),
+		formatSummaryLine("Missing For WACC", strings.Join(result.MissingForWACC, ", ")),
+		formatSummaryLine("Missing For Target Price", strings.Join(result.MissingForTargetPrice, ", ")),
+	}
+
+	for _, input := range result.Inputs {
+		value := string(input.Status)
+		if input.HasValue {
+			value = DCFInputStatusText(input)
+		}
+		if input.Note != "" {
+			value += " | " + input.Note
+		}
+		lines = append(lines, formatSummaryLine(input.Name, value))
+	}
+
+	printSummaryBlock("DCF Readiness Summary", lines)
+}
+
+func printDCFValuationSummary(result *domesticstock.DCFValuationResult) {
+	if result == nil || result.Valuation == nil {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Symbol", result.Symbol),
+		formatSummaryLine("Revenue / EBIT", fmt.Sprintf("%s / %s", formatFloat(result.Financial.Revenue), formatFloat(result.Financial.EBIT))),
+		formatSummaryLine("Current Price", formatFloat(result.CurrentPrice)),
+		formatSummaryLine("Base FCF", formatFloat(result.Valuation.BaseFCF)),
+		formatSummaryLine("Risk Free / Beta / MRP", fmt.Sprintf("%s / %s / %s",
+			formatPercent(result.Market.RiskFreeRate),
+			formatFloat(result.Market.Beta),
+			formatPercent(result.Market.MarketPremium),
+		)),
+		formatSummaryLine("Cost Of Debt", formatPercent(result.Market.CostOfDebt)),
+		formatSummaryLine("Equity / Debt Weight", fmt.Sprintf("%s / %s",
+			formatPercent(result.Market.EquityWeight),
+			formatPercent(result.Market.DebtWeight),
+		)),
+		formatSummaryLine("Cost Of Equity", formatPercent(result.Valuation.CostOfEquity)),
+		formatSummaryLine("WACC", formatPercent(result.Valuation.WACC)),
+		formatSummaryLine("Terminal Growth", formatPercent(result.Assumptions.TerminalGrowth)),
+		formatSummaryLine("Enterprise Value", formatFloat(result.Valuation.EnterpriseValue)),
+		formatSummaryLine("Equity Value", formatFloat(result.Valuation.EquityValue)),
+		formatSummaryLine("Net Debt", formatFloat(result.Financial.NetDebt)),
+		formatSummaryLine("Shares Out", formatFloat(result.Financial.SharesOut)),
+		formatSummaryLine("Target Price", formatFloat(result.Valuation.TargetPrice)),
+		formatSummaryLine("Projection", fmt.Sprintf("growth=%s ebit=%s dna=%s capex=%s nwc=%s",
+			formatPercent(result.Projection.RevenueGrowth),
+			formatPercent(result.Projection.EBITMargin),
+			formatPercent(result.Projection.DNAMargin),
+			formatPercent(result.Projection.CapExMargin),
+			formatPercent(result.Projection.NWCMargin),
+		)),
+	}
+
+	for i, year := range result.Valuation.Forecast {
+		if i >= 3 {
+			break
+		}
+		lines = append(lines, formatSummaryLine(
+			fmt.Sprintf("Year %d", year.Year),
+			fmt.Sprintf("rev=%s fcf=%s pv=%s",
+				formatFloat(year.Revenue),
+				formatFloat(year.FCF),
+				formatFloat(year.PresentValue),
+			),
+		))
+	}
+
+	for i, note := range result.Notes {
+		if i >= 3 {
+			break
+		}
+		lines = append(lines, formatSummaryLine(fmt.Sprintf("Note %d", i+1), note))
+	}
+
+	printSummaryBlock("DCF Valuation Summary", lines)
+}
+
+func printReverseDCFSummary(result *dcf.ReverseDCFResult) {
+	if result == nil || result.Valuation == nil {
+		return
+	}
+
+	printSummaryBlock("Reverse DCF Summary", []string{
+		formatSummaryLine("Target Price", formatFloat(result.TargetPrice)),
+		formatSummaryLine("Implied Revenue Growth", formatPercent(result.ImpliedRevenueGrowth)),
+		formatSummaryLine("Iterations", fmt.Sprintf("%d", result.Iterations)),
+		formatSummaryLine("Price Error", formatFloat(result.PriceError)),
+		formatSummaryLine("Solved WACC", formatPercent(result.Valuation.WACC)),
+		formatSummaryLine("Solved EV / Equity", fmt.Sprintf("%s / %s",
+			formatFloat(result.Valuation.EnterpriseValue),
+			formatFloat(result.Valuation.EquityValue),
+		)),
+	})
+}
+
+func printMonteCarloSummary(result *dcf.MonteCarloResult) {
+	if result == nil {
+		return
+	}
+
+	printSummaryBlock("Monte Carlo DCF Summary", []string{
+		formatSummaryLine("Requested / Valid / Invalid", fmt.Sprintf("%d / %d / %d", result.RequestedIterations, result.ValidIterations, result.InvalidIterations)),
+		formatSummaryLine("Mean", formatFloat(result.Mean)),
+		formatSummaryLine("P10 / P50 / P90", fmt.Sprintf("%s / %s / %s",
+			formatFloat(result.P10),
+			formatFloat(result.P50),
+			formatFloat(result.P90),
+		)),
+		formatSummaryLine("Min / Max", fmt.Sprintf("%s / %s",
+			formatFloat(result.Min),
+			formatFloat(result.Max),
+		)),
+	})
 }
 
 func printProgramTradeSummary(resp *auth.RESTResponse) {
@@ -561,6 +757,26 @@ func formatSummaryLine(label string, value string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s: %s", label, value)
+}
+
+func DCFInputStatusText(input domesticstock.DCFInputValue) string {
+	if !input.HasValue {
+		return string(input.Status)
+	}
+
+	switch input.Name {
+	case "EffectiveTax", "EquityWeight", "DebtWeight", "RiskFreeRate", "MarketPremium", "CostOfDebt", "RevenueGrowth", "EBITMargin", "DNAMargin", "CapExMargin", "NWCMargin":
+		return fmt.Sprintf("%s (%s)", formatPercent(input.Value), input.Status)
+	default:
+		return fmt.Sprintf("%s (%s)", formatFloat(input.Value), input.Status)
+	}
+}
+
+func formatBool(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
 
 func firstRow(resp *auth.RESTResponse, outputKey string) map[string]any {
