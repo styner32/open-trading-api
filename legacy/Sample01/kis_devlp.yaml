@@ -22,7 +22,7 @@
 # # 앱키, 앱시크리트, 토큰, 계좌번호 등 저장관리, 자신만의 경로와 파일명으로 설정하시기 바랍니다.
 # # pip install PyYAML (패키지설치)
 # with open(config_root + 'kis_devlp.yaml', encoding='UTF-8') as f:
-#     _cfg = yaml.load(f, Loader=yaml.FullLoader)
+#     _cfg = yaml.safe_load(f)
 # 
 # _TRENV = tuple()
 # _last_auth_time = datetime.now()
