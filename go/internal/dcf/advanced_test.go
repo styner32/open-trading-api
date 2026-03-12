@@ -21,6 +21,18 @@ var _ = Describe("ReverseDCF", func() {
 		Expect(result.PriceError).To(BeNumerically("~", 0, 1e-3))
 		Expect(result.Valuation).NotTo(BeNil())
 	})
+
+	It("reports the effective clamped growth range on bracket failure", func() {
+		fin := FinancialData{Revenue: 1000, EBIT: 180, EffectiveTax: 0.22, DnA: 40, CapEx: 50, ChangeInNWC: 10, SharesOut: 100, NetDebt: 200}
+		market := MarketData{RiskFreeRate: 0.03, Beta: 1.1, MarketPremium: 0.055, CostOfDebt: 0.045, EquityWeight: 0.7, DebtWeight: 0.3}
+		assumptions := Assumptions{ForecastYears: 5, TerminalGrowth: 0.02}
+		projection := ProjectionModel{RevenueGrowth: 0.06, EBITMargin: 0.18, DNAMargin: 0.04, CapExMargin: 0.05, NWCMargin: 0.01}
+
+		_, err := ReverseDCF(fin, market, assumptions, projection, 999999999999, ReverseDCFConfig{LowerGrowth: -0.5, UpperGrowth: 1.0})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("effective growth range [-0.2000, 0.2500]"))
+		Expect(err.Error()).To(ContainSubstring("requested [-0.5000, 1.0000]"))
+	})
 })
 
 var _ = Describe("MonteCarlo", func() {

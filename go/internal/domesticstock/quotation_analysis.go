@@ -1,0 +1,104 @@
+package domesticstock
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"github.com/kis-open-api/go/internal/auth"
+)
+
+const (
+	inquireInvestorPath         = "/uapi/domestic-stock/v1/quotations/inquire-investor"
+	foreignInstitutionTotalPath = "/uapi/domestic-stock/v1/quotations/foreign-institution-total"
+	askingPriceExpCCNPath       = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+	inquireInvestorTRID         = "FHKST01010900"
+	foreignInstitutionTotalTRID = "FHPTJ04400000"
+	askingPriceExpCCNTRID       = "FHKST01010200"
+	defaultForeignMarketDivCode = "V"
+	defaultForeignScreenDivCode = "16449"
+	defaultForeignInputISCD     = "0000"
+	defaultForeignDivClassCode  = "1"
+	defaultForeignRankSortCode  = "0"
+	defaultForeignEtcClassCode  = "1"
+)
+
+func (s *Service) InquireInvestor(ctx context.Context, marketDivCode string, inputISCD string) (*auth.RESTResponse, error) {
+	marketDivCode = strings.TrimSpace(marketDivCode)
+	inputISCD = strings.TrimSpace(inputISCD)
+	if marketDivCode == "" {
+		marketDivCode = "J"
+	}
+	if inputISCD == "" {
+		return nil, errors.New("inputISCD is required")
+	}
+
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": marketDivCode,
+		"FID_INPUT_ISCD":         inputISCD,
+	}
+	return s.client.Get(ctx, inquireInvestorPath, inquireInvestorTRID, "", params)
+}
+
+func (s *Service) ForeignInstitutionTotal(
+	ctx context.Context,
+	marketDivCode string,
+	screenDivCode string,
+	inputISCD string,
+	divClassCode string,
+	rankSortCode string,
+	etcClassCode string,
+) (*auth.RESTResponse, error) {
+	marketDivCode = strings.TrimSpace(marketDivCode)
+	screenDivCode = strings.TrimSpace(screenDivCode)
+	inputISCD = strings.TrimSpace(inputISCD)
+	divClassCode = strings.TrimSpace(divClassCode)
+	rankSortCode = strings.TrimSpace(rankSortCode)
+	etcClassCode = strings.TrimSpace(etcClassCode)
+
+	if marketDivCode == "" {
+		marketDivCode = defaultForeignMarketDivCode
+	}
+	if screenDivCode == "" {
+		screenDivCode = defaultForeignScreenDivCode
+	}
+	if inputISCD == "" {
+		inputISCD = defaultForeignInputISCD
+	}
+	if divClassCode == "" {
+		divClassCode = defaultForeignDivClassCode
+	}
+	if rankSortCode == "" {
+		rankSortCode = defaultForeignRankSortCode
+	}
+	if etcClassCode == "" {
+		etcClassCode = defaultForeignEtcClassCode
+	}
+
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": marketDivCode,
+		"FID_COND_SCR_DIV_CODE":  screenDivCode,
+		"FID_INPUT_ISCD":         inputISCD,
+		"FID_DIV_CLS_CODE":       divClassCode,
+		"FID_RANK_SORT_CLS_CODE": rankSortCode,
+		"FID_ETC_CLS_CODE":       etcClassCode,
+	}
+	return s.client.Get(ctx, foreignInstitutionTotalPath, foreignInstitutionTotalTRID, "", params)
+}
+
+func (s *Service) InquireAskingPriceExpCCN(ctx context.Context, marketDivCode string, inputISCD string) (*auth.RESTResponse, error) {
+	marketDivCode = strings.TrimSpace(marketDivCode)
+	inputISCD = strings.TrimSpace(inputISCD)
+	if marketDivCode == "" {
+		marketDivCode = "J"
+	}
+	if inputISCD == "" {
+		return nil, errors.New("inputISCD is required")
+	}
+
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": marketDivCode,
+		"FID_INPUT_ISCD":         inputISCD,
+	}
+	return s.client.Get(ctx, askingPriceExpCCNPath, askingPriceExpCCNTRID, "", params)
+}

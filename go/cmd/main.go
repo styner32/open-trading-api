@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -12,8 +13,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/kis-open-api/go/internal/auth"
 	"github.com/kis-open-api/go/internal/dcf"
+	"github.com/kis-open-api/go/internal/domesticfutureoption"
 	"github.com/kis-open-api/go/internal/domesticstock"
 	"github.com/kis-open-api/go/internal/overseasstock"
+	"github.com/kis-open-api/go/internal/quadwitching"
 )
 
 func main() {
@@ -49,9 +52,10 @@ func main() {
 	printUsefulEndpoints()
 
 	svc := domesticstock.NewService(client)
+	futureSvc := domesticfutureoption.NewService(client)
 	overseasStockSvc := overseasstock.NewService(client)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	pbrCtx, pbrCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer pbrCancel()
@@ -64,10 +68,20 @@ func main() {
 	mustAPIResult("market-time", respMarketTime, err, "output1")
 	printMarketTimeSummary(respMarketTime)
 	businessDate := resolveBusinessDateFromMarketTime(respMarketTime, today)
+	quadSnapshot := quadwitching.SnapshotExport{
+		GeneratedAt:    time.Now().Format(time.RFC3339),
+		BusinessDate:   businessDate,
+		EndpointStates: map[string]quadwitching.EndpointSnapshot{},
+		Notes: []string{
+			"futures inquire-time-fuopccnl and inquire-member are experimental because no verified local sample existed in the repository",
+		},
+	}
+	quadSnapshot.EndpointStates["market_time"] = quadwitching.NewEndpointSnapshot(respMarketTime, nil)
 
 	respKOSPI, err := svc.InquireIndexPrice(ctx, "0001")
 	mustAPIResult("inquire-index-price (KOSPI 0001)", respKOSPI, err, "output")
 	printIndexSummary("KOSPI", respKOSPI)
+	quadSnapshot.EndpointStates["kospi_index_price"] = quadwitching.NewEndpointSnapshot(respKOSPI, nil)
 
 	respKOSDAQ, err := svc.InquireIndexPrice(ctx, "1001")
 	mustAPIResult("inquire-index-price (KOSDAQ 1001)", respKOSDAQ, err, "output")
@@ -90,6 +104,7 @@ func main() {
 	respProgramTrade, err := svc.CompProgramTradeToday(ctx, "K")
 	mustAPIResult("comp-program-trade-today (KOSPI)", respProgramTrade, err, "output")
 	printProgramTradeSummary(respProgramTrade)
+	quadSnapshot.EndpointStates["program_trade_today"] = quadwitching.NewEndpointSnapshot(respProgramTrade, nil)
 
 	respVI, err := svc.InquireVIStatus(ctx, businessDate)
 	mustAPIResult("inquire-vi-status", respVI, err, "output")
@@ -98,6 +113,115 @@ func main() {
 	respFunds, err := svc.MarketFunds(ctx, "")
 	mustAPIResult("mktfunds", respFunds, err, "output")
 	printMarketFundsSummary(respFunds)
+
+	quadWitchingFutures, err := futureSvc.ResolveNearMonthKOSPI200Futures(ctx, businessDate)
+	if err != nil {
+		log.Printf("quad witching futures code resolve error: %v", err)
+		quadSnapshot.Notes = append(quadSnapshot.Notes, "futures resolver error: "+err.Error())
+	} else {
+		quadSnapshot.FuturesCode = quadWitchingFutures.Record.ShortCode
+		quadSnapshot.FuturesName = quadWitchingFutures.Record.Name
+		quadSnapshot.MasterCache = quadWitchingFutures.MasterCachePath
+		quadSnapshot.MasterJSON = quadWitchingFutures.MasterJSONPath
+		printQuadWitchingContractSummary(quadWitchingFutures)
+
+		futuresCode := quadWitchingFutures.Record.ShortCode
+		futuresMarketDivCode := getOrDefault("QUAD_WITCHING_FUTURES_MARKET_DIV_CODE", "F")
+
+		respFuturePrice, err := futureSvc.InquirePrice(ctx, futuresMarketDivCode, futuresCode)
+		quadSnapshot.EndpointStates["future_price"] = quadwitching.NewEndpointSnapshot(respFuturePrice, err)
+		if optionalAPIResult("domestic-futureoption inquire-price ("+futuresCode+")", respFuturePrice, err, "output1") {
+			printFuturePriceSummary(respFuturePrice)
+		}
+
+		respFutureBoardTop, err := futureSvc.DisplayBoardTop(ctx, futuresMarketDivCode, futuresCode, "", "", "", "")
+		quadSnapshot.EndpointStates["future_board_top"] = quadwitching.NewEndpointSnapshot(respFutureBoardTop, err)
+		if optionalAPIResult("domestic-futureoption display-board-top ("+futuresCode+")", respFutureBoardTop, err, "output1") {
+			printFutureBoardTopSummary(respFutureBoardTop)
+		}
+
+		respFutureBoard, err := futureSvc.DisplayBoardFutures(ctx, futuresMarketDivCode, "", "")
+		quadSnapshot.EndpointStates["future_board"] = quadwitching.NewEndpointSnapshot(respFutureBoard, err)
+		if optionalAPIResult("domestic-futureoption display-board-futures", respFutureBoard, err, "output") {
+			printFutureBoardSummary(respFutureBoard, futuresCode)
+		}
+
+		respFutureTimeChart, err := futureSvc.InquireTimeFuopChartPrice(
+			ctx,
+			futuresMarketDivCode,
+			futuresCode,
+			getOrDefault("QUAD_WITCHING_FUTURES_HOUR_CLS_CODE", "60"),
+			getOrDefault("QUAD_WITCHING_FUTURES_INCLUDE_PAST_DATA", "Y"),
+			getOrDefault("QUAD_WITCHING_FUTURES_INCLUDE_FAKE_TICK", "N"),
+			businessDate,
+			getOrDefault("QUAD_WITCHING_FUTURES_INPUT_HOUR", time.Now().Format("150405")),
+		)
+		quadSnapshot.EndpointStates["future_time_chart"] = quadwitching.NewEndpointSnapshot(respFutureTimeChart, err)
+		if optionalAPIResult("domestic-futureoption inquire-time-fuopchartprice ("+futuresCode+")", respFutureTimeChart, err, "output2") {
+			printFutureTimeChartSummary(respFutureTimeChart)
+		}
+
+		respFutureExpected, err := futureSvc.ExpPriceTrend(ctx, futuresCode, futuresMarketDivCode)
+		quadSnapshot.EndpointStates["future_expected_price"] = quadwitching.NewEndpointSnapshot(respFutureExpected, err)
+		if optionalAPIResult("domestic-futureoption exp-price-trend ("+futuresCode+")", respFutureExpected, err, "output2") {
+			printFutureExpectedPriceSummary(respFutureExpected)
+		}
+
+		respFutureCCNL, err := futureSvc.InquireTimeFuopCCNL(ctx, futuresMarketDivCode, futuresCode)
+		quadSnapshot.EndpointStates["future_time_conclusion_experimental"] = quadwitching.NewEndpointSnapshot(respFutureCCNL, err)
+		if optionalAPIResult("domestic-futureoption inquire-time-fuopccnl ("+futuresCode+")", respFutureCCNL, err, "output") {
+			printFutureExecutionSummary(respFutureCCNL)
+		}
+
+		respFutureMember, err := futureSvc.InquireMember(ctx, futuresMarketDivCode, futuresCode)
+		quadSnapshot.EndpointStates["future_member_experimental"] = quadwitching.NewEndpointSnapshot(respFutureMember, err)
+		if optionalAPIResult("domestic-futureoption inquire-member ("+futuresCode+")", respFutureMember, err, "output") {
+			printFutureMemberSummary(respFutureMember)
+		}
+	}
+
+	respQuadInvestor, err := svc.InquireInvestor(ctx, "J", getOrDefault("QUAD_WITCHING_INVESTOR_SYMBOL", "0001"))
+	quadSnapshot.EndpointStates["kospi_investor"] = quadwitching.NewEndpointSnapshot(respQuadInvestor, err)
+	if optionalAPIResult("domestic-stock inquire-investor", respQuadInvestor, err, "output") {
+		printInvestorTrendSummary("Quad Witching KOSPI Investor Trend", respQuadInvestor)
+	}
+
+	respKOSPI200Investor, err := svc.InquireInvestor(ctx, "J", getOrDefault("QUAD_WITCHING_KOSPI200_INVESTOR_SYMBOL", "2001"))
+	quadSnapshot.EndpointStates["kospi200_investor"] = quadwitching.NewEndpointSnapshot(respKOSPI200Investor, err)
+	if optionalAPIResult("domestic-stock inquire-investor (KOSPI200)", respKOSPI200Investor, err, "output") {
+		printInvestorTrendSummary("Quad Witching KOSPI200 Investor Trend", respKOSPI200Investor)
+	}
+
+	respForeignTotal, err := svc.ForeignInstitutionTotal(
+		ctx,
+		getOrDefault("QUAD_WITCHING_FOREIGN_MARKET_DIV_CODE", "V"),
+		getOrDefault("QUAD_WITCHING_FOREIGN_SCREEN_DIV_CODE", "16449"),
+		getOrDefault("QUAD_WITCHING_FOREIGN_INPUT_ISCD", "0000"),
+		getOrDefault("QUAD_WITCHING_FOREIGN_DIV_CLS_CODE", "1"),
+		getOrDefault("QUAD_WITCHING_FOREIGN_RANK_SORT_CODE", "0"),
+		getOrDefault("QUAD_WITCHING_FOREIGN_ETC_CLS_CODE", "1"),
+	)
+	quadSnapshot.EndpointStates["foreign_institution_total"] = quadwitching.NewEndpointSnapshot(respForeignTotal, err)
+	if optionalAPIResult("domestic-stock foreign-institution-total", respForeignTotal, err, "output") {
+		printForeignInstitutionSummary(respForeignTotal)
+	}
+
+	respAskingPrice, err := svc.InquireAskingPriceExpCCN(ctx, "J", getOrDefault("QUAD_WITCHING_AUCTION_SYMBOL", targetSymbol))
+	quadSnapshot.EndpointStates["asking_price_expected"] = quadwitching.NewEndpointSnapshot(respAskingPrice, err)
+	if optionalAPIResult("domestic-stock inquire-asking-price-exp-ccn", respAskingPrice, err, "output1") {
+		printAskingPriceExpSummary(getOrDefault("QUAD_WITCHING_AUCTION_SYMBOL", targetSymbol), respAskingPrice)
+	}
+
+	quadSnapshotPath := resolveQuadWitchingSnapshotPath(
+		getOrDefault("QUAD_WITCHING_SNAPSHOT_JSON_FILE", ".cache/quad_witching_snapshot.json"),
+		businessDate,
+		quadSnapshot.FuturesCode,
+	)
+	if err := quadwitching.WriteSnapshot(quadSnapshotPath, quadSnapshot); err != nil {
+		log.Printf("quad witching snapshot export error: %v", err)
+	} else {
+		printQuadWitchingSnapshotSummary(quadSnapshotPath, quadSnapshot)
+	}
 
 	ewyExchangeCode, err := overseasStockSvc.ResolveEWYExchangeCode(ctx)
 	if err != nil {
@@ -142,49 +266,77 @@ func main() {
 
 	dcfReadiness, err := svc.DCFReadiness(ctx, targetSymbol, "0")
 	if err != nil {
-		log.Fatalf("DCF readiness error: %v", err)
+		log.Printf("DCF readiness error: %v", err)
+	} else {
+		printDCFReadinessSummary(dcfReadiness)
 	}
-	printDCFReadinessSummary(dcfReadiness)
 
 	dcfValuation, err := svc.DCFValuation(ctx, targetSymbol, domesticstock.DCFValuationOptions{})
 	if err != nil {
-		log.Fatalf("DCF valuation error: %v", err)
+		log.Printf("DCF valuation error: %v", err)
+	} else {
+		printDCFValuationSummary(dcfValuation)
 	}
-	printDCFValuationSummary(dcfValuation)
 
-	if dcfValuation.CurrentPrice <= 0 {
-		log.Fatalf("reverse DCF error: current price missing")
+	var reverseDCFResult *dcf.ReverseDCFResult
+	if dcfValuation != nil {
+		if dcfValuation.CurrentPrice <= 0 {
+			log.Printf("reverse DCF error: current price missing")
+		} else {
+			reverseDCFResult, err = dcf.ReverseDCF(
+				dcfValuation.Financial,
+				dcfValuation.Market,
+				dcfValuation.Assumptions,
+				dcfValuation.Projection,
+				dcfValuation.CurrentPrice,
+				dcf.ReverseDCFConfig{},
+			)
+			if err != nil {
+				log.Printf("reverse DCF error: %v", err)
+			} else {
+				printReverseDCFSummary(reverseDCFResult)
+			}
+		}
 	}
-	reverseDCFResult, err := dcf.ReverseDCF(
-		dcfValuation.Financial,
-		dcfValuation.Market,
-		dcfValuation.Assumptions,
-		dcfValuation.Projection,
-		dcfValuation.CurrentPrice,
-		dcf.ReverseDCFConfig{},
-	)
-	if err != nil {
-		log.Fatalf("reverse DCF error: %v", err)
-	}
-	printReverseDCFSummary(reverseDCFResult)
 
-	monteCarloResult, err := dcf.MonteCarlo(
-		dcfValuation.Financial,
-		dcfValuation.Market,
-		dcfValuation.Assumptions,
-		dcfValuation.Projection,
-		dcf.MonteCarloConfig{
-			Iterations:           getIntOrDefault("DCF_MONTE_CARLO_ITERATIONS", 2000),
-			Workers:              getIntOrDefault("DCF_MONTE_CARLO_WORKERS", 0),
-			RevenueGrowthStdDev:  getFloatOrDefault("DCF_MONTE_CARLO_GROWTH_STDDEV", 0.02),
-			WACCStdDev:           getFloatOrDefault("DCF_MONTE_CARLO_WACC_STDDEV", 0.01),
-			TerminalGrowthStdDev: getFloatOrDefault("DCF_MONTE_CARLO_TERMINAL_STDDEV", 0.005),
-		},
-	)
-	if err != nil {
-		log.Fatalf("monte carlo DCF error: %v", err)
+	monteCarloConfig := dcf.MonteCarloConfig{
+		Iterations:           getIntOrDefault("DCF_MONTE_CARLO_ITERATIONS", 2000),
+		Workers:              getIntOrDefault("DCF_MONTE_CARLO_WORKERS", 0),
+		RevenueGrowthStdDev:  getFloatOrDefault("DCF_MONTE_CARLO_GROWTH_STDDEV", 0.02),
+		WACCStdDev:           getFloatOrDefault("DCF_MONTE_CARLO_WACC_STDDEV", 0.01),
+		TerminalGrowthStdDev: getFloatOrDefault("DCF_MONTE_CARLO_TERMINAL_STDDEV", 0.005),
 	}
-	printMonteCarloSummary(monteCarloResult)
+	if dcfValuation != nil {
+		monteCarloResult, monteCarloErr := dcf.MonteCarlo(
+			dcfValuation.Financial,
+			dcfValuation.Market,
+			dcfValuation.Assumptions,
+			dcfValuation.Projection,
+			monteCarloConfig,
+		)
+		if monteCarloErr != nil {
+			log.Printf("monte carlo DCF error: %v", monteCarloErr)
+		} else {
+			monteCarloJSONPath := resolveMonteCarloJSONPath(getOrDefault("DCF_MONTE_CARLO_JSON_FILE", ".cache/dcf_monte_carlo.json"), businessDate, targetSymbol)
+			if err := dcf.WriteMonteCarloExport(monteCarloJSONPath, dcf.MonteCarloExport{
+				GeneratedAt:   time.Now().Format(time.RFC3339),
+				BusinessDate:  businessDate,
+				Symbol:        targetSymbol,
+				CurrentPrice:  dcfValuation.CurrentPrice,
+				Financial:     dcfValuation.Financial,
+				Market:        dcfValuation.Market,
+				Assumptions:   dcfValuation.Assumptions,
+				Projection:    dcfValuation.Projection,
+				Valuation:     dcfValuation.Valuation,
+				ReverseDCF:    reverseDCFResult,
+				MonteCarloCfg: monteCarloConfig,
+				MonteCarlo:    monteCarloResult,
+			}); err != nil {
+				log.Printf("monte carlo JSON export error: %v", err)
+			}
+			printMonteCarloSummary(monteCarloResult, monteCarloJSONPath)
+		}
+	}
 
 	printClientMetricsSummary(client.MetricsSnapshot())
 }
@@ -205,16 +357,26 @@ func printUsefulEndpoints() {
 		{"/uapi/domestic-stock/v1/quotations/investor-program-trade-today", "투자자 프로그램매매 당일 동향"},
 		{"/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market", "시장별 투자자매매 동향"},
 		{"/uapi/domestic-stock/v1/quotations/foreign-institution-total", "외인/기관 매매집계"},
+		{"/uapi/domestic-stock/v1/quotations/inquire-investor", "종목/지수 투자자 수급"},
 		{"/uapi/domestic-stock/v1/quotations/frgnmem-trade-estimate", "외국계 매매 가집계"},
 		{"/uapi/domestic-stock/v1/quotations/investor-trend-estimate", "종목 외인/기관 추정 집계"},
 		{"/uapi/domestic-stock/v1/quotations/inquire-vi-status", "VI 발동 현황"},
 		{"/uapi/domestic-stock/v1/quotations/mktfunds", "증시자금 종합"},
+		{"/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", "동시호가 예상체결/호가"},
+		{"/uapi/domestic-futureoption/v1/quotations/inquire-price", "국내선물 현재가/베이시스"},
+		{"/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice", "국내선물 분봉/체결 추세"},
+		{"/uapi/domestic-futureoption/v1/quotations/display-board-top", "국내선물 기초자산/잔존일"},
+		{"/uapi/domestic-futureoption/v1/quotations/display-board-futures", "국내선물 전광판"},
+		{"/uapi/domestic-futureoption/v1/quotations/exp-price-trend", "국내선물 예상체결 추이"},
+		{"/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopccnl", "국내선물 체결 추이(실험적 wrapper)"},
+		{"/uapi/domestic-futureoption/v1/quotations/inquire-member", "국내선물 투자자별 매매동향(실험적 wrapper)"},
 		{"/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", "RSI/기술지표 원천(OHLCV)"},
 		{"/uapi/domestic-stock/v1/finance/balance-sheet", "DCF용 자산/부채/자본 구조"},
 		{"/uapi/domestic-stock/v1/finance/income-statement", "DCF용 매출/영업이익/감가상각"},
 		{"/uapi/domestic-stock/v1/finance/other-major-ratios", "DCF용 EBITDA/EV-EBITDA proxy"},
 		{"/uapi/domestic-stock/v1/finance/stability-ratio", "DCF용 차입금의존도 proxy"},
 		{"/uapi/domestic-stock/v1/quotations/comp-interest", "DCF용 무위험금리(국내채권 금리)"},
+		{"/uapi/domestic-bond/v1/quotations/inquire-price", "DCF용 무위험금리(국내채권 코드 직접 조회)"},
 		{"/uapi/domestic-stock/v1/quotations/inquire-time-itemconclusion", "종목 체결 시계열(초단위)"},
 		{"/uapi/domestic-stock/v1/quotations/pbar-tratio", "매물대/거래비중"},
 		{"/uapi/domestic-stock/v1/quotations/tradprt-byamt", "체결금액대별 매매비중"},
@@ -240,11 +402,32 @@ func printAPIResult(name string, resp *auth.RESTResponse, outputKey string) {
 
 	fmt.Printf("\n[%s]\n", name)
 	fmt.Printf("rt_cd=%v msg_cd=%v msg1=%v\n", resp.Body["rt_cd"], resp.Body["msg_cd"], resp.Body["msg1"])
+	if resp.ParseError != "" {
+		fmt.Printf("status_code=%d content_type=%s body_bytes=%d\n", resp.StatusCode, resp.Headers.Get("Content-Type"), len(resp.RawBody))
+		if resp.RequestMethod != "" || resp.RequestURL != "" {
+			fmt.Printf("request=%s %s\n", resp.RequestMethod, resp.RequestURL)
+		}
+		fmt.Printf("parse_error=%s\n", resp.ParseError)
+		if len(resp.RawBody) > 0 {
+			fmt.Printf("raw_body=%s\n", rawPreview(resp.RawBody))
+		}
+		if resp.ParseError == "empty response body" {
+			fmt.Printf("note=server returned no JSON body; this endpoint may require additional parameters or may not be exposed in the current environment\n")
+		}
+		return
+	}
 	if outputKey == "" {
+		if len(resp.RawBody) > 0 && len(resp.Body) == 0 {
+			fmt.Printf("raw_body=%s\n", rawPreview(resp.RawBody))
+		}
 		return
 	}
 	if value, ok := resp.Body[outputKey]; ok {
 		fmt.Printf("output(%s)=%s\n", outputKey, preview(value))
+		return
+	}
+	if len(resp.RawBody) > 0 {
+		fmt.Printf("raw_body=%s\n", rawPreview(resp.RawBody))
 	}
 }
 
@@ -262,6 +445,50 @@ func mustAPIResult(name string, resp *auth.RESTResponse, err error, outputKey st
 	printAPIResult(name, resp, outputKey)
 }
 
+func optionalAPIResult(name string, resp *auth.RESTResponse, err error, outputKey string) bool {
+	if err != nil {
+		if isEmptyBodyResponse(resp, err) {
+			log.Printf("%s returned an empty response body", name)
+			if resp != nil {
+				printAPIResult(name, resp, outputKey)
+			}
+			return false
+		}
+		log.Printf("%s error: %v", name, err)
+		if resp != nil {
+			printAPIResult(name, resp, outputKey)
+		}
+		return false
+	}
+	if resp == nil {
+		log.Printf("%s error: response is nil", name)
+		return false
+	}
+	if !resp.IsOK() {
+		log.Printf("%s error: msg_cd=%s msg1=%s", name, resp.MessageCode(), resp.Message())
+		return false
+	}
+
+	printAPIResult(name, resp, outputKey)
+	return true
+}
+
+func isEmptyBodyResponse(resp *auth.RESTResponse, err error) bool {
+	if resp == nil {
+		return false
+	}
+
+	if resp.ParseError == "empty response body" {
+		return true
+	}
+
+	if err == nil {
+		return false
+	}
+
+	return strings.Contains(err.Error(), "empty response body")
+}
+
 func preview(value any) string {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -274,6 +501,18 @@ func preview(value any) string {
 	default:
 		return fmt.Sprintf("%v", typed)
 	}
+}
+
+func rawPreview(raw []byte) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return "<empty>"
+	}
+	const limit = 400
+	if len(trimmed) <= limit {
+		return trimmed
+	}
+	return trimmed[:limit] + "...(truncated)"
 }
 
 func getOrDefault(key string, defaultValue string) string {
@@ -513,6 +752,9 @@ func printDCFValuationSummary(result *domesticstock.DCFValuationResult) {
 		formatSummaryLine("Equity Value", formatFloat(result.Valuation.EquityValue)),
 		formatSummaryLine("Net Debt", formatFloat(result.Financial.NetDebt)),
 		formatSummaryLine("Shares Out", formatFloat(result.Financial.SharesOut)),
+		formatSummaryLine("Target Price Raw", formatFloat(result.Valuation.TargetPriceRaw)),
+		formatSummaryLine("Target Price Scale", formatFloat(result.Valuation.TargetPriceScale)),
+		formatSummaryLine("Target Price Unit", result.Valuation.TargetPriceUnit),
 		formatSummaryLine("Target Price", formatFloat(result.Valuation.TargetPrice)),
 		formatSummaryLine("Projection", fmt.Sprintf("growth=%s ebit=%s dna=%s capex=%s nwc=%s",
 			formatPercent(result.Projection.RevenueGrowth),
@@ -565,7 +807,7 @@ func printReverseDCFSummary(result *dcf.ReverseDCFResult) {
 	})
 }
 
-func printMonteCarloSummary(result *dcf.MonteCarloResult) {
+func printMonteCarloSummary(result *dcf.MonteCarloResult, jsonPath string) {
 	if result == nil {
 		return
 	}
@@ -582,6 +824,7 @@ func printMonteCarloSummary(result *dcf.MonteCarloResult) {
 			formatFloat(result.Min),
 			formatFloat(result.Max),
 		)),
+		formatSummaryLine("JSON Export", jsonPath),
 	})
 }
 
@@ -593,12 +836,14 @@ func printProgramTradeSummary(resp *auth.RESTResponse) {
 
 	printSummaryBlock("Program Trade Summary", []string{
 		formatSummaryLine("Date", firstNonEmpty(row, "stck_bsop_date")),
-		formatSummaryLine("Market Close", firstNonEmpty(row, "stck_clpr")),
-		formatSummaryLine("Net Buy Qty", firstNonEmpty(row, "whol_smtn_ntby_qty")),
-		formatSummaryLine("Net Buy Amount", firstNonEmpty(row, "whol_smtn_ntby_tr_pbmn")),
+		formatSummaryLine("Market Close", humanNumber(firstNonEmpty(row, "stck_clpr"))),
+		formatSummaryLine("Program Net Position", netFlowText(firstNonEmpty(row, "whol_smtn_ntby_qty"), "")),
+		formatSummaryLine("Program Net Amount", netFlowText(firstNonEmpty(row, "whol_smtn_ntby_tr_pbmn"), "")),
+		formatSummaryLine("Arbitrage Net Amount", netFlowText(firstNonEmpty(row, "prsm_nslg_pbmn"), "")),
+		formatSummaryLine("Non-Arbitrage Net Amount", netFlowText(firstNonEmpty(row, "nprsm_nslg_pbmn"), "")),
 		formatSummaryLine("Buy / Sell Volume", joinNonEmpty(" / ",
-			firstNonEmpty(row, "whol_smtn_shnu_vol"),
-			firstNonEmpty(row, "whol_smtn_seln_vol"),
+			humanNumber(firstNonEmpty(row, "whol_smtn_shnu_vol")),
+			humanNumber(firstNonEmpty(row, "whol_smtn_seln_vol")),
 		)),
 	})
 }
@@ -646,6 +891,300 @@ func printMarketFundsSummary(resp *auth.RESTResponse) {
 		formatSummaryLine("Credit Loan Balance", firstNonEmpty(row, "crdt_loan_rmnd")),
 		formatSummaryLine("Futures Deposit", firstNonEmpty(row, "futs_tfam_amt")),
 		formatSummaryLine("Amount Turnover", firstNonEmpty(row, "amt_tnrt")),
+	})
+}
+
+func printQuadWitchingContractSummary(resolved *domesticfutureoption.ResolvedContract) {
+	if resolved == nil {
+		return
+	}
+
+	printSummaryBlock("Quad Witching Contract", []string{
+		formatSummaryLine("Business Date", resolved.BusinessDate),
+		formatSummaryLine("Source", resolved.Source),
+		formatSummaryLine("Contract", joinNonEmpty(" ", resolved.Record.ShortCode, resolved.Record.Name)),
+		formatSummaryLine("Month Class", resolved.Record.MonthClassCode),
+		formatSummaryLine("Underlying", joinNonEmpty(" / ", resolved.Record.UnderlyingShortCode, resolved.Record.UnderlyingName)),
+		formatSummaryLine("Master Cache", resolved.MasterCachePath),
+		formatSummaryLine("Master JSON", resolved.MasterJSONPath),
+	})
+}
+
+func printFuturePriceSummary(resp *auth.RESTResponse) {
+	row := firstRowAny(resp, "output1", "output", "output2", "output3")
+	if row == nil {
+		return
+	}
+
+	printSummaryBlock("Quad Witching Futures Price", []string{
+		formatSummaryLine("Contract", firstNonEmpty(row, "hts_kor_isnm")),
+		formatSummaryLine("Futures Price", humanNumber(firstNonEmpty(row, "futs_prpr"))),
+		formatSummaryLine("Spot Index", humanNumber(firstNonEmpty(row, "bstp_nmix_prpr"))),
+		formatSummaryLine("Basis (Futures - Spot)", formatOptionalHumanNumber(computeBasis(row))),
+		formatSummaryLine("Market Basis", humanNumber(firstNonEmpty(row, "mrkt_basis"))),
+		formatSummaryLine("Open Interest", joinNonEmpty(" / ",
+			humanNumber(firstNonEmpty(row, "hts_otst_stpl_qty")),
+			signedChangeText(firstNonEmpty(row, "otst_stpl_qty_icdc"), "increase", "decrease", ""),
+		)),
+		formatSummaryLine("Days To Expiry", daysText(firstNonEmpty(row, "hts_rmnn_dynu"))),
+		formatSummaryLine("Volume / Turnover", joinNonEmpty(" / ",
+			humanNumber(firstNonEmpty(row, "acml_vol")),
+			humanNumber(firstNonEmpty(row, "acml_tr_pbmn")),
+		)),
+	})
+}
+
+func printFutureBoardTopSummary(resp *auth.RESTResponse) {
+	topRow := firstRow(resp, "output1")
+	if topRow == nil {
+		return
+	}
+
+	printSummaryBlock("Quad Witching Futures Board Top", []string{
+		formatSummaryLine("Underlying Price", humanNumber(firstNonEmpty(topRow, "unas_prpr"))),
+		formatSummaryLine("Underlying Change / Rate", joinNonEmpty(" / ",
+			signedChangeText(firstNonEmpty(topRow, "unas_prdy_vrss"), "up", "down", ""),
+			firstNonEmpty(topRow, "unas_prdy_ctrt"),
+		)),
+		formatSummaryLine("Futures Price", humanNumber(firstNonEmpty(topRow, "futs_prpr"))),
+		formatSummaryLine("Futures Change / Rate", joinNonEmpty(" / ",
+			signedChangeText(firstNonEmpty(topRow, "futs_prdy_vrss"), "up", "down", ""),
+			firstNonEmpty(topRow, "futs_prdy_ctrt"),
+		)),
+		formatSummaryLine("Days To Expiry", daysText(firstNonEmpty(topRow, "hts_rmnn_dynu"))),
+	})
+}
+
+func printFutureBoardSummary(resp *auth.RESTResponse, targetCode string) {
+	rows := rowsFromResponse(resp, "output")
+	if len(rows) == 0 {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Contracts", fmt.Sprintf("%d", len(rows))),
+	}
+
+	if target := findRowByValue(rows, "futs_shrn_iscd", targetCode); target != nil {
+		lines = append(lines, formatSummaryLine(
+			"Selected Contract",
+			fmt.Sprintf("%s %s, current %s, open interest %s, %s to expiry, expected match %s",
+				firstNonEmpty(target, "futs_shrn_iscd"),
+				firstNonEmpty(target, "hts_kor_isnm"),
+				humanNumber(firstNonEmpty(target, "futs_prpr")),
+				humanNumber(firstNonEmpty(target, "hts_otst_stpl_qty")),
+				daysText(firstNonEmpty(target, "hts_rmnn_dynu")),
+				humanNumber(firstNonEmpty(target, "futs_antc_cnpr")),
+			),
+		))
+	}
+
+	limit := 3
+	if len(rows) < limit {
+		limit = len(rows)
+	}
+	for i := 0; i < limit; i++ {
+		row := rows[i]
+		lines = append(lines, formatSummaryLine(
+			fmt.Sprintf("Board Row %d", i+1),
+			fmt.Sprintf("%s %s, current %s, open interest %s, expected match %s",
+				firstNonEmpty(row, "futs_shrn_iscd"),
+				firstNonEmpty(row, "hts_kor_isnm"),
+				humanNumber(firstNonEmpty(row, "futs_prpr")),
+				humanNumber(firstNonEmpty(row, "hts_otst_stpl_qty")),
+				humanNumber(firstNonEmpty(row, "futs_antc_cnpr")),
+			),
+		))
+	}
+
+	printSummaryBlock("Quad Witching Futures Board", lines)
+}
+
+func printFutureTimeChartSummary(resp *auth.RESTResponse) {
+	header := firstRow(resp, "output1")
+	rows := rowsFromResponse(resp, "output2")
+
+	lines := []string{
+		formatSummaryLine("Contract", firstNonEmpty(header, "hts_kor_isnm")),
+		formatSummaryLine("Samples", fmt.Sprintf("%d", len(rows))),
+	}
+
+	if len(rows) > 0 {
+		latest := rows[0]
+		lines = append(lines,
+			formatSummaryLine("Latest Time", firstNonEmpty(latest, "stck_cntg_hour")),
+			formatSummaryLine("Latest Futures Price", humanNumber(firstNonEmpty(latest, "futs_prpr"))),
+			formatSummaryLine("Latest Basis / KOSPI200", joinNonEmpty(" / ",
+				humanNumber(firstNonEmpty(latest, "basis")),
+				humanNumber(firstNonEmpty(latest, "kospi200_nmix")),
+			)),
+			formatSummaryLine("Latest Trade Volume", humanNumber(firstNonEmpty(latest, "cntg_vol"))),
+			formatSummaryLine("Open Interest / Change", joinNonEmpty(" / ",
+				humanNumber(firstNonEmpty(latest, "hts_otst_stpl_qty")),
+				signedChangeText(firstNonEmpty(latest, "otst_stpl_qty_icdc"), "increase", "decrease", ""),
+			)),
+		)
+	}
+
+	printSummaryBlock("Quad Witching Futures Time Chart", lines)
+}
+
+func printFutureExpectedPriceSummary(resp *auth.RESTResponse) {
+	header := firstRow(resp, "output1")
+	rows := rowsFromResponse(resp, "output2")
+	if header == nil && len(rows) == 0 {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Contract", firstNonEmpty(header, "hts_kor_isnm")),
+		formatSummaryLine("Samples", fmt.Sprintf("%d", len(rows))),
+	}
+
+	if len(rows) > 0 {
+		latest := rows[0]
+		lines = append(lines,
+			formatSummaryLine("Latest Time", firstNonEmpty(latest, "stck_cntg_hour")),
+			formatSummaryLine("Expected Match Price", humanNumber(firstNonEmpty(latest, "futs_antc_cnpr"))),
+			formatSummaryLine("Expected Change", signedChangeText(firstNonEmpty(latest, "futs_antc_cntg_vrss"), "up", "down", "")),
+			formatSummaryLine("Expected Rate", firstNonEmpty(latest, "antc_cntg_prdy_ctrt")),
+		)
+	}
+
+	printSummaryBlock("Quad Witching Expected Price", lines)
+}
+
+func printFutureExecutionSummary(resp *auth.RESTResponse) {
+	row := firstRowAny(resp, "output", "output1", "output2")
+	rows := rowsFromResponse(resp, "output")
+	if row == nil && len(rows) == 0 {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Rows", fmt.Sprintf("%d", len(rows))),
+	}
+	if row != nil {
+		lines = append(lines,
+			formatSummaryLine("Latest Time", firstNonEmpty(row, "stck_cntg_hour", "aspr_acpt_hour")),
+			formatSummaryLine("Latest Price / Change", joinNonEmpty(" / ",
+				humanNumber(firstNonEmpty(row, "futs_prpr")),
+				signedChangeText(firstNonEmpty(row, "futs_prdy_vrss", "futs_antc_cntg_vrss"), "up", "down", ""),
+			)),
+			formatSummaryLine("Trade Volume", humanNumber(firstNonEmpty(row, "cntg_vol", "acml_vol"))),
+			formatSummaryLine("First Row", preview(row)),
+		)
+	}
+
+	printSummaryBlock("Quad Witching Futures Execution", lines)
+}
+
+func printFutureMemberSummary(resp *auth.RESTResponse) {
+	row := firstRowAny(resp, "output", "output1", "output2")
+	rows := rowsFromResponse(resp, "output")
+	if row == nil && len(rows) == 0 {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Rows", fmt.Sprintf("%d", len(rows))),
+	}
+	if row != nil {
+		lines = append(lines,
+			formatSummaryLine("Foreign Position", netFlowText(firstNonEmpty(row, "frgn_ntby_qty", "frgn_shnu_vol", "frgn_seln_vol"), "계약")),
+			formatSummaryLine("Institution Position", netFlowText(firstNonEmpty(row, "orgn_ntby_qty", "orgn_shnu_vol", "orgn_seln_vol"), "계약")),
+			formatSummaryLine("Personal Position", netFlowText(firstNonEmpty(row, "prsn_ntby_qty", "prsn_shnu_vol", "prsn_seln_vol"), "계약")),
+			formatSummaryLine("Raw First Row", preview(row)),
+		)
+	}
+
+	printSummaryBlock("Quad Witching Futures Member", lines)
+}
+
+func printInvestorTrendSummary(title string, resp *auth.RESTResponse) {
+	row := firstRow(resp, "output")
+	if row == nil {
+		return
+	}
+
+	if strings.TrimSpace(title) == "" {
+		title = "Quad Witching Investor Trend"
+	}
+
+	printSummaryBlock(title, []string{
+		formatSummaryLine("Business Date", firstNonEmpty(row, "stck_bsop_date")),
+		formatSummaryLine("Personal", netFlowText(firstNonEmpty(row, "prsn_ntby_qty"), "주")),
+		formatSummaryLine("Foreign", netFlowText(firstNonEmpty(row, "frgn_ntby_qty"), "주")),
+		formatSummaryLine("Institution", netFlowText(firstNonEmpty(row, "orgn_ntby_qty"), "주")),
+		formatSummaryLine("Net Amounts", joinNonEmpty(" / ",
+			"개인 "+netFlowText(firstNonEmpty(row, "prsn_ntby_tr_pbmn"), ""),
+			"외국인 "+netFlowText(firstNonEmpty(row, "frgn_ntby_tr_pbmn"), ""),
+			"기관 "+netFlowText(firstNonEmpty(row, "orgn_ntby_tr_pbmn"), ""),
+		)),
+	})
+}
+
+func printForeignInstitutionSummary(resp *auth.RESTResponse) {
+	rows := rowsFromResponse(resp, "output")
+	if len(rows) == 0 {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Rows", fmt.Sprintf("%d", len(rows))),
+	}
+
+	limit := 30
+	if len(rows) < limit {
+		limit = len(rows)
+	}
+	for i := 0; i < limit; i++ {
+		row := rows[i]
+		lines = append(lines, formatSummaryLine(
+			fmt.Sprintf("Rank %d", i+1),
+			fmt.Sprintf("%s %s, 현재가 %s, 순수량은 %s, 순대금은 %s",
+				firstNonEmpty(row, "mksc_shrn_iscd"),
+				firstNonEmpty(row, "hts_kor_isnm"),
+				stockPriceText(firstNonEmpty(row, "stck_prpr")),
+				netFlowText(firstNonEmpty(row, "ntby_qty", "frgn_ntby_qty", "orgn_ntby_qty"), "주"),
+				netFlowText(firstNonEmpty(row, "frgn_ntby_tr_pbmn", "orgn_ntby_tr_pbmn"), ""),
+			),
+		))
+	}
+
+	printSummaryBlock("Quad Witching Foreign/Institution Total", lines)
+}
+
+func printAskingPriceExpSummary(symbol string, resp *auth.RESTResponse) {
+	orderBook := firstRow(resp, "output1")
+	expected := firstRowAny(resp, "output2", "output")
+	if orderBook == nil && expected == nil {
+		return
+	}
+
+	printSummaryBlock("Quad Witching Closing Auction", []string{
+		formatSummaryLine("Symbol", symbol),
+		formatSummaryLine("Current Price", stockPriceText(firstNonEmpty(orderBook, "stck_prpr"))),
+		formatSummaryLine("Expected Match Price", stockPriceText(firstNonEmpty(expected, "antc_cnpr"))),
+		formatSummaryLine("Expected Change / Rate", joinNonEmpty(" / ",
+			signedChangeText(firstNonEmpty(expected, "antc_cntg_vrss"), "up", "down", "flat"),
+			firstNonEmpty(expected, "antc_cntg_prdy_ctrt"),
+		)),
+		formatSummaryLine("Expected Match Volume", humanNumber(firstNonEmpty(expected, "antc_vol"))),
+		formatSummaryLine("Total Ask / Bid Balance", joinNonEmpty(" / ",
+			humanNumber(firstNonEmpty(orderBook, "total_askp_rsqn")),
+			humanNumber(firstNonEmpty(orderBook, "total_bidp_rsqn")),
+		)),
+		formatSummaryLine("VI Code", firstNonEmpty(orderBook, "vi_cls_code")),
+	})
+}
+
+func printQuadWitchingSnapshotSummary(path string, snapshot quadwitching.SnapshotExport) {
+	printSummaryBlock("Quad Witching Snapshot", []string{
+		formatSummaryLine("Business Date", snapshot.BusinessDate),
+		formatSummaryLine("Futures", joinNonEmpty(" ", snapshot.FuturesCode, snapshot.FuturesName)),
+		formatSummaryLine("Endpoint Count", fmt.Sprintf("%d", len(snapshot.EndpointStates))),
+		formatSummaryLine("JSON Export", path),
 	})
 }
 
@@ -759,6 +1298,152 @@ func formatSummaryLine(label string, value string) string {
 	return fmt.Sprintf("%s: %s", label, value)
 }
 
+func humanNumber(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, ",", ""))
+	if value == "" {
+		return ""
+	}
+
+	parsedInt, err := strconv.ParseInt(value, 10, 64)
+	if err == nil {
+		return formatIntWithCommas(parsedInt)
+	}
+
+	parsedFloat, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return value
+	}
+
+	if parsedFloat == float64(int64(parsedFloat)) {
+		return formatIntWithCommas(int64(parsedFloat))
+	}
+
+	negative := parsedFloat < 0
+	if negative {
+		parsedFloat = -parsedFloat
+	}
+	raw := strconv.FormatFloat(parsedFloat, 'f', 2, 64)
+	parts := strings.SplitN(raw, ".", 2)
+	intPart, _ := strconv.ParseInt(parts[0], 10, 64)
+	formatted := formatIntWithCommas(intPart)
+	if len(parts) == 2 {
+		decimal := strings.TrimRight(parts[1], "0")
+		if decimal != "" {
+			formatted += "." + decimal
+		}
+	}
+	if negative {
+		return "-" + formatted
+	}
+	return formatted
+}
+
+func formatIntWithCommas(value int64) string {
+	negative := value < 0
+	if negative {
+		value = -value
+	}
+
+	raw := strconv.FormatInt(value, 10)
+	if len(raw) <= 3 {
+		if negative {
+			return "-" + raw
+		}
+		return raw
+	}
+
+	var builder strings.Builder
+	if negative {
+		builder.WriteByte('-')
+	}
+	prefixLen := len(raw) % 3
+	if prefixLen == 0 {
+		prefixLen = 3
+	}
+	builder.WriteString(raw[:prefixLen])
+	for i := prefixLen; i < len(raw); i += 3 {
+		builder.WriteByte(',')
+		builder.WriteString(raw[i : i+3])
+	}
+	return builder.String()
+}
+
+func netFlowText(value string, unit string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	parsed, err := strconv.ParseFloat(strings.ReplaceAll(value, ",", ""), 64)
+	if err != nil {
+		return joinNonEmpty(" ", value, unit)
+	}
+
+	action := "순매수"
+	if parsed < 0 {
+		action = "순매도"
+		parsed = -parsed
+	}
+	if parsed == 0 {
+		action = "중립"
+	}
+
+	number := humanNumber(strconv.FormatFloat(parsed, 'f', -1, 64))
+	if action == "중립" {
+		if unit != "" {
+			return action + " " + number + unit
+		}
+		return action + " " + number
+	}
+	return joinNonEmpty(" ", action, number+unit)
+}
+
+func signedChangeText(value string, positiveWord string, negativeWord string, zeroWord string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	parsed, err := strconv.ParseFloat(strings.ReplaceAll(value, ",", ""), 64)
+	if err != nil {
+		return value
+	}
+
+	switch {
+	case parsed > 0:
+		if positiveWord == "" {
+			return "+" + humanNumber(strconv.FormatFloat(parsed, 'f', -1, 64))
+		}
+		return positiveWord + " " + humanNumber(strconv.FormatFloat(parsed, 'f', -1, 64))
+	case parsed < 0:
+		if negativeWord == "" {
+			return humanNumber(strconv.FormatFloat(parsed, 'f', -1, 64))
+		}
+		return negativeWord + " " + humanNumber(strconv.FormatFloat(-parsed, 'f', -1, 64))
+	default:
+		if zeroWord != "" {
+			return zeroWord
+		}
+		return "0"
+	}
+}
+
+func stockPriceText(value string) string {
+	value = humanNumber(value)
+	if value == "" {
+		return ""
+	}
+	return value + "원"
+}
+
+func daysText(value string) string {
+	value = humanNumber(value)
+	if value == "" {
+		return ""
+	}
+	return value + "일"
+}
+
 func DCFInputStatusText(input domesticstock.DCFInputValue) string {
 	if !input.HasValue {
 		return string(input.Status)
@@ -787,6 +1472,15 @@ func firstRow(resp *auth.RESTResponse, outputKey string) map[string]any {
 	return rows[0]
 }
 
+func firstRowAny(resp *auth.RESTResponse, outputKeys ...string) map[string]any {
+	for _, outputKey := range outputKeys {
+		if row := firstRow(resp, outputKey); row != nil {
+			return row
+		}
+	}
+	return nil
+}
+
 func rowsFromResponse(resp *auth.RESTResponse, outputKey string) []map[string]any {
 	if resp == nil || resp.Body == nil {
 		return nil
@@ -813,6 +1507,19 @@ func rowsFromResponse(resp *auth.RESTResponse, outputKey string) []map[string]an
 	default:
 		return nil
 	}
+}
+
+func findRowByValue(rows []map[string]any, key string, target string) map[string]any {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+	for _, row := range rows {
+		if fieldString(row, key) == target {
+			return row
+		}
+	}
+	return nil
 }
 
 func firstNonEmpty(row map[string]any, keys ...string) string {
@@ -847,6 +1554,110 @@ func normalizeYMD(value string) string {
 		}
 	}
 	return value
+}
+
+func fieldFloat(row map[string]any, key string) (float64, bool) {
+	value := fieldString(row, key)
+	if value == "" {
+		return 0, false
+	}
+
+	parsed, err := strconv.ParseFloat(strings.ReplaceAll(value, ",", ""), 64)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func computeBasis(row map[string]any) (float64, bool) {
+	if basis, ok := fieldFloat(row, "basis"); ok {
+		return basis, true
+	}
+
+	futuresPrice, ok := fieldFloat(row, "futs_prpr")
+	if !ok {
+		return 0, false
+	}
+	spotIndex, ok := fieldFloat(row, "bstp_nmix_prpr")
+	if !ok {
+		return 0, false
+	}
+
+	return futuresPrice - spotIndex, true
+}
+
+func formatOptionalFloat(value float64, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return formatFloat(value)
+}
+
+func formatOptionalHumanNumber(value float64, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return humanNumber(strconv.FormatFloat(value, 'f', -1, 64))
+}
+
+func resolveMonteCarloJSONPath(basePath string, businessDate string, symbol string) string {
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		basePath = ".cache/dcf_monte_carlo.json"
+	}
+
+	dir := filepath.Dir(basePath)
+	filename := filepath.Base(basePath)
+	ext := filepath.Ext(filename)
+	stem := filename
+	if ext != "" {
+		stem = strings.TrimSuffix(filename, ext)
+	}
+
+	parts := []string{stem}
+	if normalizedDate := normalizeYMD(businessDate); normalizedDate != "" {
+		parts = append(parts, normalizedDate)
+	}
+	symbol = strings.TrimSpace(symbol)
+	if symbol != "" {
+		parts = append(parts, symbol)
+	}
+
+	resolved := strings.Join(parts, ".")
+	if ext == "" {
+		ext = ".json"
+	}
+	return filepath.Join(dir, resolved+ext)
+}
+
+func resolveQuadWitchingSnapshotPath(basePath string, businessDate string, futuresCode string) string {
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		basePath = ".cache/quad_witching_snapshot.json"
+	}
+
+	dir := filepath.Dir(basePath)
+	filename := filepath.Base(basePath)
+	ext := filepath.Ext(filename)
+	stem := filename
+	if ext != "" {
+		stem = strings.TrimSuffix(filename, ext)
+	}
+
+	parts := []string{stem}
+	if normalizedDate := normalizeYMD(businessDate); normalizedDate != "" {
+		parts = append(parts, normalizedDate)
+	}
+	futuresCode = strings.TrimSpace(futuresCode)
+	if futuresCode != "" {
+		parts = append(parts, futuresCode)
+	}
+
+	resolved := strings.Join(parts, ".")
+	if ext == "" {
+		ext = ".json"
+	}
+	return filepath.Join(dir, resolved+ext)
 }
 
 func joinNonEmpty(sep string, parts ...string) string {

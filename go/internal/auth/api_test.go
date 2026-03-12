@@ -92,4 +92,54 @@ var _ = Describe("KIClient GET", func() {
 		Expect(metrics.TotalDuration).To(BeNumerically(">=", 0))
 		Expect(metrics.RPM).To(BeNumerically(">=", 0))
 	})
+
+	It("returns raw body when JSON parsing fails", func() {
+		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
+		client.SetAuthToken("test-token")
+
+		transport := testhelpers.NewMockTransport()
+		DeferCleanup(func() {
+			Expect(transport.Verify()).To(Succeed())
+		})
+
+		transport.New("https://example.test").
+			Get("/uapi/bad-json").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusOK).
+			BodyString("{\"rt_cd\":\"0\",\"msg1\":\"partial\"")
+
+		client.Client = &http.Client{Transport: transport}
+
+		resp, err := client.Get(context.Background(), "/uapi/bad-json", "FTESTBADJSON", "", nil)
+		Expect(err).To(HaveOccurred())
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.ParseError).NotTo(BeEmpty())
+		Expect(string(resp.RawBody)).To(ContainSubstring("\"msg1\":\"partial\""))
+	})
+
+	It("returns an explicit empty-body parse error when the response body is empty", func() {
+		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
+		client.SetAuthToken("test-token")
+
+		transport := testhelpers.NewMockTransport()
+		DeferCleanup(func() {
+			Expect(transport.Verify()).To(Succeed())
+		})
+
+		transport.New("https://example.test").
+			Get("/uapi/empty").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusOK)
+
+		client.Client = &http.Client{Transport: transport}
+
+		resp, err := client.Get(context.Background(), "/uapi/empty", "FTESTEMPTY", "", nil)
+		Expect(err).To(HaveOccurred())
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.ParseError).To(Equal("empty response body"))
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		Expect(resp.RequestMethod).To(Equal(http.MethodGet))
+		Expect(resp.RequestURL).To(Equal("https://example.test/uapi/empty"))
+		Expect(resp.RawBody).To(BeEmpty())
+	})
 })

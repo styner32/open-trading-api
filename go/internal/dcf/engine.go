@@ -57,11 +57,16 @@ type ValuationResult struct {
 	TerminalPresentValue float64         `json:"terminal_present_value"`
 	EnterpriseValue      float64         `json:"enterprise_value"`
 	EquityValue          float64         `json:"equity_value"`
+	TargetPriceRaw       float64         `json:"target_price_raw"`
+	TargetPriceScale     float64         `json:"target_price_scale"`
+	TargetPriceUnit      string          `json:"target_price_unit"`
 	TargetPrice          float64         `json:"target_price"`
 	Forecast             []ForecastYear  `json:"forecast"`
 	Projection           ProjectionModel `json:"projection"`
 	Assumptions          Assumptions     `json:"assumptions"`
 }
+
+const targetPriceKRWScale = 100_000_000.0
 
 func FCF(fin FinancialData) float64 {
 	return (fin.EBIT * (1 - fin.EffectiveTax)) + fin.DnA - fin.CapEx - fin.ChangeInNWC

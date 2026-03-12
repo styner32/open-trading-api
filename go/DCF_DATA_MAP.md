@@ -23,12 +23,13 @@ Implemented code:
 | `ChangeInNWC` | derived | `balance-sheet.output.(cras, flow_lblt)` | Proxy: delta of `(current assets - current liabilities)` |
 | `SharesOut` | exact | `inquire-price.output.lstn_stcn` | Listed shares |
 | `NetDebt` | derived | `other-major-ratios.output.(ebitda, ev_ebitda)` + `inquire-price.output.hts_avls` | Proxy: `EV - market cap`; fallback uses debt dependence |
-| `RiskFreeRate` | exact / assumed | `comp-interest.output.(hts_kor_isnm, bond_mnrt_prpr)` or `DCF_RISK_FREE_RATE` | Prefers KIS domestic bond rate snapshot; can tighten row selection with `DCF_RISK_FREE_NAME_HINT` |
+| `RiskFreeRate` | exact / assumed | `domestic-bond.inquire-price.output.(stnd_iscd, ernn_rate)` or `comp-interest.output.(hts_kor_isnm, bond_mnrt_prpr)` or `DCF_RISK_FREE_RATE` | Prefers code-based domestic bond quote via `DCF_RISK_FREE_BOND_CODE`; falls back to `comp-interest` name matching |
 | `Beta` | derived / assumed | `inquire-daily-itemchartprice` + `inquire-index-daily-price` or `DCF_BETA` | Rolling beta from matched daily returns |
-| `MarketPremium` | assumed | `DCF_MARKET_PREMIUM` | Defaults to `5.5%` if not overridden |
+| `MarketPremium` | exact / assumed | Damodaran implied ERP provider, `DCF_MARKET_PREMIUM`, or `DCF_MARKET_PREMIUM_FILE` | Prefers external provider; falls back to `5.5%` assumption only when provider is unavailable |
 | `CostOfDebt` | derived / assumed | `income-statement.output.bsop_non_expn` + `stability-ratio.output.bram_depn` or `DCF_COST_OF_DEBT` | Proxy from non-operating expense over debt proxy; fallback uses risk-free + spread |
 | `EquityWeight` | derived | market cap + net debt proxy | Prefers market-value capital structure |
 | `DebtWeight` | derived | market cap + net debt proxy | Falls back to book-capital proxy |
+| `TargetPrice` | derived | `equity_value / shares_out * 100,000,000` | Internal enterprise/equity values are treated as `억원`; final target price is normalized to `KRW/share` |
 
 ## What This Means
 
@@ -40,7 +41,8 @@ Implemented code:
 - `Monte Carlo`: possible
 
 Important caveat:
-- `NetDebt`, `CostOfDebt`, and `MarketPremium` are not fully clean accounting-market facts in KIS alone. They remain proxy / assumption inputs and must be read that way.
+- `NetDebt` and `CostOfDebt` remain proxy-style inputs.
+- `MarketPremium` is now provider-backed by default, but it is still an external market assumption input rather than a KIS-native company fact.
 
 ## API Calls Used By DCF Readiness / Valuation
 
@@ -52,16 +54,23 @@ Required company calls:
 Additional calls for market / proxy inputs:
 4. `/uapi/domestic-stock/v1/finance/other-major-ratios`
 5. `/uapi/domestic-stock/v1/finance/stability-ratio`
-6. `/uapi/domestic-stock/v1/quotations/comp-interest`
-7. `/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice`
-8. `/uapi/domestic-stock/v1/quotations/inquire-index-daily-price`
+6. `/uapi/domestic-bond/v1/quotations/inquire-price`
+7. `/uapi/domestic-stock/v1/quotations/comp-interest`
+8. `/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice`
+9. `/uapi/domestic-stock/v1/quotations/inquire-index-daily-price`
+10. Damodaran home page (`https://pages.stern.nyu.edu/adamodar/New_Home_Page/home.htm`) for implied ERP
 
 ## Assumption / Override Environment Variables
 
 - `DCF_RISK_FREE_RATE`
+- `DCF_RISK_FREE_BOND_CODE`
+- `DCF_RISK_FREE_BOND_MARKET_DIV_CODE`
 - `DCF_RISK_FREE_NAME_HINT`
 - `DCF_BETA`
 - `DCF_MARKET_PREMIUM`
+- `DCF_MARKET_PREMIUM_PROVIDER`
+- `DCF_MARKET_PREMIUM_FILE`
+- `DCF_MARKET_PREMIUM_URL`
 - `DCF_COST_OF_DEBT`
 - `DCF_NET_DEBT`
 - `DCF_FORECAST_YEARS`
@@ -74,3 +83,4 @@ Additional calls for market / proxy inputs:
 - `DCF_MONTE_CARLO_GROWTH_STDDEV`
 - `DCF_MONTE_CARLO_WACC_STDDEV`
 - `DCF_MONTE_CARLO_TERMINAL_STDDEV`
+- `DCF_MONTE_CARLO_JSON_FILE`

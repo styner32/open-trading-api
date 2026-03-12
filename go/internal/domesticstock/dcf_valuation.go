@@ -11,6 +11,8 @@ import (
 
 	"github.com/kis-open-api/go/internal/auth"
 	"github.com/kis-open-api/go/internal/dcf"
+	"github.com/kis-open-api/go/internal/domesticbond"
+	"github.com/kis-open-api/go/internal/marketpremium"
 )
 
 const (
@@ -25,6 +27,8 @@ const (
 	indexDailyPriceTRID         = "FHPUP02120000"
 
 	dcfRiskFreeRateEnvKey     = "DCF_RISK_FREE_RATE"
+	dcfRiskFreeBondCodeEnvKey = "DCF_RISK_FREE_BOND_CODE"
+	dcfRiskFreeBondDivEnvKey  = "DCF_RISK_FREE_BOND_MARKET_DIV_CODE"
 	dcfRiskFreeNameHintEnvKey = "DCF_RISK_FREE_NAME_HINT"
 	dcfBetaEnvKey             = "DCF_BETA"
 	dcfMarketPremiumEnvKey    = "DCF_MARKET_PREMIUM"
@@ -36,12 +40,13 @@ const (
 	dcfBetaLookbackEnvKey     = "DCF_BETA_LOOKBACK_DAYS"
 	dcfCreditSpreadEnvKey     = "DCF_CREDIT_SPREAD"
 
-	defaultDCFMarketPremium  = 0.055
-	defaultDCFTerminalGrowth = 0.02
-	defaultDCFForecastYears  = 5
-	defaultDCFBetaLookback   = 400
-	defaultDCFCreditSpread   = 0.015
-	defaultDCFIndexCode      = "0001"
+	defaultDCFMarketPremium   = 0.055
+	defaultDCFTerminalGrowth  = 0.02
+	defaultDCFForecastYears   = 5
+	defaultDCFBetaLookback    = 400
+	defaultDCFCreditSpread    = 0.015
+	defaultDCFIndexCode       = "0001"
+	defaultDCFRiskFreeBondDiv = "B"
 )
 
 type DCFValuationOptions struct {
@@ -51,6 +56,8 @@ type DCFValuationOptions struct {
 	IndexCode        string
 	BetaLookbackDays int
 	RiskFreeRate     *float64
+	RiskFreeBondCode string
+	RiskFreeBondDiv  string
 	Beta             *float64
 	MarketPremium    *float64
 	CostOfDebt       *float64
@@ -340,22 +347,50 @@ func (s *Service) buildDCFInputBundle(ctx context.Context, symbol string, option
 	if input, ok := resolveRiskFreeRateInput(options); ok {
 		bundle.Inputs = append(bundle.Inputs, input)
 		bundle.Market.RiskFreeRate = input.Value
-	} else if resp, reqErr := s.CompInterest(ctx); reqErr == nil {
-		if input, found := deriveRiskFreeRateFromCompInterest(resp); found {
-			bundle.Inputs = append(bundle.Inputs, input)
-			bundle.Market.RiskFreeRate = input.Value
-		} else {
-			bundle.Inputs = append(bundle.Inputs, DCFInputValue{Name: "RiskFreeRate", Status: DCFInputMissing, Source: "comp-interest.output1/output2", Note: "10Y treasury row not found"})
-		}
 	} else {
-		bundle.Inputs = append(bundle.Inputs, DCFInputValue{Name: "RiskFreeRate", Status: DCFInputMissing, Source: "comp-interest", Note: reqErr.Error()})
+		bondInput, bondNote, bondOK := s.resolveRiskFreeRateFromBond(ctx, options)
+		if bondOK {
+			bundle.Inputs = append(bundle.Inputs, bondInput)
+			bundle.Market.RiskFreeRate = bondInput.Value
+			if bondNote != "" {
+				bundle.Notes = append(bundle.Notes, bondNote)
+			}
+		} else {
+			if bondNote != "" {
+				bundle.Notes = append(bundle.Notes, bondNote)
+			}
+			if resp, reqErr := s.CompInterest(ctx); reqErr == nil {
+				if input, found := deriveRiskFreeRateFromCompInterest(resp); found {
+					bundle.Inputs = append(bundle.Inputs, input)
+					bundle.Market.RiskFreeRate = input.Value
+				} else {
+					bundle.Inputs = append(bundle.Inputs, DCFInputValue{Name: "RiskFreeRate", Status: DCFInputMissing, Source: "comp-interest.output1/output2", Note: "10Y treasury row not found"})
+				}
+			} else {
+				bundle.Inputs = append(bundle.Inputs, DCFInputValue{Name: "RiskFreeRate", Status: DCFInputMissing, Source: "comp-interest", Note: reqErr.Error()})
+			}
+		}
 	}
 
 	if input, ok := resolveMarketPremiumInput(options); ok {
 		bundle.Inputs = append(bundle.Inputs, input)
 		bundle.Market.MarketPremium = input.Value
 	} else {
-		bundle.Inputs = append(bundle.Inputs, DCFInputValue{Name: "MarketPremium", Status: DCFInputMissing, Source: dcfMarketPremiumEnvKey})
+		providerInput, providerNote, providerOK := s.resolveMarketPremiumFromProvider(ctx)
+		if providerOK {
+			bundle.Inputs = append(bundle.Inputs, providerInput)
+			bundle.Market.MarketPremium = providerInput.Value
+			if providerNote != "" {
+				bundle.Notes = append(bundle.Notes, providerNote)
+			}
+		} else {
+			fallback := defaultDCFMarketPremium
+			bundle.Inputs = append(bundle.Inputs, DCFInputValue{Name: "MarketPremium", Status: DCFInputAssumed, Value: fallback, HasValue: true, Source: dcfMarketPremiumEnvKey, Note: "default assumption 5.50%"})
+			bundle.Market.MarketPremium = fallback
+			if providerNote != "" {
+				bundle.Notes = append(bundle.Notes, providerNote)
+			}
+		}
 	}
 
 	if input, ok := resolveBetaInput(options); ok {
@@ -417,16 +452,20 @@ func resolveDCFValuationOptions(options DCFValuationOptions) DCFValuationOptions
 	if options.RiskFreeRate == nil {
 		options.RiskFreeRate = envOptionalFloat(dcfRiskFreeRateEnvKey)
 	}
+	if strings.TrimSpace(options.RiskFreeBondCode) == "" {
+		options.RiskFreeBondCode = strings.TrimSpace(os.Getenv(dcfRiskFreeBondCodeEnvKey))
+	}
+	if strings.TrimSpace(options.RiskFreeBondDiv) == "" {
+		options.RiskFreeBondDiv = strings.TrimSpace(os.Getenv(dcfRiskFreeBondDivEnvKey))
+		if options.RiskFreeBondDiv == "" {
+			options.RiskFreeBondDiv = defaultDCFRiskFreeBondDiv
+		}
+	}
 	if options.Beta == nil {
 		options.Beta = envOptionalFloat(dcfBetaEnvKey)
 	}
 	if options.MarketPremium == nil {
-		if value := envOptionalFloat(dcfMarketPremiumEnvKey); value != nil {
-			options.MarketPremium = value
-		} else {
-			fallback := defaultDCFMarketPremium
-			options.MarketPremium = &fallback
-		}
+		options.MarketPremium = envOptionalFloat(dcfMarketPremiumEnvKey)
 	}
 	if options.CostOfDebt == nil {
 		options.CostOfDebt = envOptionalFloat(dcfCostOfDebtEnvKey)
@@ -444,6 +483,24 @@ func resolveRiskFreeRateInput(options DCFValuationOptions) (DCFInputValue, bool)
 	return DCFInputValue{Name: "RiskFreeRate", Status: DCFInputAssumed, Value: *options.RiskFreeRate, HasValue: true, Source: dcfRiskFreeRateEnvKey, Note: "env override"}, true
 }
 
+func (s *Service) resolveRiskFreeRateFromBond(ctx context.Context, options DCFValuationOptions) (DCFInputValue, string, bool) {
+	bondCode := strings.TrimSpace(options.RiskFreeBondCode)
+	if bondCode == "" {
+		return DCFInputValue{}, "", false
+	}
+
+	resp, err := domesticbond.NewService(s.client).InquirePrice(ctx, options.RiskFreeBondDiv, bondCode)
+	if err != nil {
+		return DCFInputValue{}, "domestic-bond inquire-price unavailable: " + err.Error(), false
+	}
+
+	input, ok := deriveRiskFreeRateFromBondPrice(resp, bondCode)
+	if !ok {
+		return DCFInputValue{}, "domestic-bond inquire-price missing ernn_rate for " + bondCode, false
+	}
+	return input, "", true
+}
+
 func resolveBetaInput(options DCFValuationOptions) (DCFInputValue, bool) {
 	if options.Beta == nil {
 		return DCFInputValue{}, false
@@ -455,11 +512,45 @@ func resolveMarketPremiumInput(options DCFValuationOptions) (DCFInputValue, bool
 	if options.MarketPremium == nil {
 		return DCFInputValue{}, false
 	}
-	note := "env override"
-	if envOptionalFloat(dcfMarketPremiumEnvKey) == nil {
-		note = fmt.Sprintf("default assumption %.2f%%", *options.MarketPremium*100)
+	return DCFInputValue{Name: "MarketPremium", Status: DCFInputAssumed, Value: *options.MarketPremium, HasValue: true, Source: dcfMarketPremiumEnvKey, Note: "env override"}, true
+}
+
+func (s *Service) resolveMarketPremiumFromProvider(ctx context.Context) (DCFInputValue, string, bool) {
+	resolver := marketpremium.Resolver{HTTPClient: s.client.Client}
+	value, err := resolver.Resolve(ctx)
+	if err != nil {
+		return DCFInputValue{}, "market premium provider unavailable: " + err.Error(), false
 	}
-	return DCFInputValue{Name: "MarketPremium", Status: DCFInputAssumed, Value: *options.MarketPremium, HasValue: true, Source: dcfMarketPremiumEnvKey, Note: note}, true
+	if value == nil || value.Rate <= 0 {
+		return DCFInputValue{}, "market premium provider returned empty rate", false
+	}
+
+	note := strings.TrimSpace(value.Note)
+	if value.AsOf != "" {
+		if note == "" {
+			note = "as of " + value.AsOf
+		} else {
+			note = note + " | as of " + value.AsOf
+		}
+	}
+
+	input := DCFInputValue{
+		Name:     "MarketPremium",
+		Status:   DCFInputExact,
+		Value:    value.Rate,
+		HasValue: true,
+		Source:   "external-market-premium." + value.Provider,
+		Note:     note,
+	}
+	sourceNote := strings.TrimSpace(value.Source)
+	if value.URL != "" {
+		if sourceNote == "" {
+			sourceNote = value.URL
+		} else {
+			sourceNote = sourceNote + " | " + value.URL
+		}
+	}
+	return input, sourceNote, true
 }
 
 func resolveCostOfDebtInput(options DCFValuationOptions) (DCFInputValue, bool) {
@@ -570,6 +661,40 @@ func deriveRiskFreeRateFromCompInterest(resp *auth.RESTResponse) (DCFInputValue,
 	}
 
 	return riskFreeRateInputFromRow(bestRow)
+}
+
+func deriveRiskFreeRateFromBondPrice(resp *auth.RESTResponse, bondCode string) (DCFInputValue, bool) {
+	row := firstOutputRow(resp, "output")
+	if row == nil {
+		return DCFInputValue{}, false
+	}
+
+	rate, ok := parseFloat(row["ernn_rate"])
+	if !ok || rate <= 0 {
+		return DCFInputValue{}, false
+	}
+	rate = percentToRatio(rate)
+
+	noteParts := make([]string, 0, 2)
+	if name := fieldStringMap(row, "hts_kor_isnm"); name != "" {
+		noteParts = append(noteParts, name)
+	}
+	if iscd := fieldStringMap(row, "stnd_iscd"); iscd != "" {
+		noteParts = append(noteParts, iscd)
+	}
+	note := strings.Join(noteParts, " | ")
+	if note == "" {
+		note = bondCode
+	}
+
+	return DCFInputValue{
+		Name:     "RiskFreeRate",
+		Status:   DCFInputExact,
+		Value:    rate,
+		HasValue: true,
+		Source:   "domestic-bond.inquire-price.output.(stnd_iscd,ernn_rate)",
+		Note:     note,
+	}, true
 }
 
 func riskFreeRateInputFromRow(row map[string]any) (DCFInputValue, bool) {

@@ -52,6 +52,9 @@ func ReverseDCF(fin FinancialData, market MarketData, assumptions Assumptions, p
 		return nil, fmt.Errorf("target price must be positive")
 	}
 
+	effectiveLowerGrowth := effectiveRevenueGrowth(projection, config.LowerGrowth)
+	effectiveUpperGrowth := effectiveRevenueGrowth(projection, config.UpperGrowth)
+
 	priceAt := func(growth float64) (*ValuationResult, error) {
 		projection.RevenueGrowth = growth
 		return Value(fin, market, assumptions, projection)
@@ -70,7 +73,7 @@ func ReverseDCF(fin FinancialData, market MarketData, assumptions Assumptions, p
 	upperPrice := upperValuation.TargetPrice
 	increasing := upperPrice >= lowerPrice
 	if !isBracketed(targetPrice, lowerPrice, upperPrice) {
-		return nil, fmt.Errorf("target price %.4f is not bracketed by growth range [%.4f, %.4f] -> prices [%.4f, %.4f]", targetPrice, config.LowerGrowth, config.UpperGrowth, lowerPrice, upperPrice)
+		return nil, fmt.Errorf("target price %.4f is not bracketed by effective growth range [%.4f, %.4f] (requested [%.4f, %.4f]) -> prices [%.4f, %.4f]", targetPrice, effectiveLowerGrowth, effectiveUpperGrowth, config.LowerGrowth, config.UpperGrowth, lowerPrice, upperPrice)
 	}
 
 	left := config.LowerGrowth
@@ -260,7 +263,8 @@ func valueForecast(fin FinancialData, assumptions Assumptions, model ProjectionM
 	terminalPresentValue := terminalValue / math.Pow(1+wacc, float64(assumptions.ForecastYears))
 	enterpriseValue := pvSum + terminalPresentValue
 	equityValue := enterpriseValue - fin.NetDebt
-	targetPrice := equityValue / fin.SharesOut
+	targetPriceRaw := equityValue / fin.SharesOut
+	targetPrice := targetPriceRaw * targetPriceKRWScale
 	return &ValuationResult{
 		BaseFCF:              FCF(fin),
 		CostOfEquity:         costOfEquity,
@@ -269,6 +273,9 @@ func valueForecast(fin FinancialData, assumptions Assumptions, model ProjectionM
 		TerminalPresentValue: terminalPresentValue,
 		EnterpriseValue:      enterpriseValue,
 		EquityValue:          equityValue,
+		TargetPriceRaw:       targetPriceRaw,
+		TargetPriceScale:     targetPriceKRWScale,
+		TargetPriceUnit:      "KRW/share",
 		TargetPrice:          targetPrice,
 		Forecast:             pricedForecast,
 		Projection:           model,
@@ -288,6 +295,11 @@ func normalizeReverseDCFConfig(config ReverseDCFConfig) ReverseDCFConfig {
 		config.MaxIterations = 100
 	}
 	return config
+}
+
+func effectiveRevenueGrowth(model ProjectionModel, growth float64) float64 {
+	model.RevenueGrowth = growth
+	return normalizeProjectionModel(model).RevenueGrowth
 }
 
 func normalizeMonteCarloConfig(config MonteCarloConfig) MonteCarloConfig {

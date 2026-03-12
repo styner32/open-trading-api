@@ -14,9 +14,13 @@ import (
 const expiredTokenMessageCode = "EGW00123"
 
 type RESTResponse struct {
-	StatusCode int
-	Headers    http.Header
-	Body       map[string]any
+	StatusCode    int
+	Headers       http.Header
+	Body          map[string]any
+	RawBody       []byte
+	ParseError    string
+	RequestMethod string
+	RequestURL    string
 }
 
 func (r *RESTResponse) IsOK() bool {
@@ -132,16 +136,26 @@ func (client *KIClient) doWithRetry(
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	var parsed map[string]any
-	if err := json.Unmarshal(rawBody, &parsed); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response body: %w", err)
+	response := &RESTResponse{
+		StatusCode:    resp.StatusCode,
+		Headers:       resp.Header.Clone(),
+		RawBody:       rawBody,
+		RequestMethod: req.Method,
+		RequestURL:    req.URL.String(),
 	}
 
-	response := &RESTResponse{
-		StatusCode: resp.StatusCode,
-		Headers:    resp.Header.Clone(),
-		Body:       parsed,
+	var parsed map[string]any
+	if len(bytes.TrimSpace(rawBody)) == 0 {
+		response.ParseError = "empty response body"
+		return response, fmt.Errorf("empty response body")
 	}
+
+	if err := json.Unmarshal(rawBody, &parsed); err != nil {
+		response.ParseError = err.Error()
+		return response, fmt.Errorf("failed to unmarshal response body: %w", err)
+	}
+
+	response.Body = parsed
 
 	if response.IsOK() {
 		return response, nil

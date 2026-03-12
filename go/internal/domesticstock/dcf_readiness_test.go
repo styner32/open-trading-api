@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/marketpremium"
 	"github.com/kis-open-api/go/internal/testhelpers"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -16,6 +18,13 @@ import (
 var _ = Describe("DCFReadiness", func() {
 	It("hydrates missing DCF inputs from KIS endpoints and assumptions", func() {
 		transport := newDCFTransport()
+		Expect(os.Setenv(dcfRiskFreeBondCodeEnvKey, "KR2033022D33")).To(Succeed())
+		DeferCleanup(func() {
+			Expect(os.Unsetenv(dcfRiskFreeBondCodeEnvKey)).To(Succeed())
+			Expect(os.Unsetenv(dcfRiskFreeBondDivEnvKey)).To(Succeed())
+			Expect(os.Unsetenv(marketpremium.ProviderEnvKey)).To(Succeed())
+			Expect(os.Unsetenv(dcfMarketPremiumEnvKey)).To(Succeed())
+		})
 		client := auth.NewKIClient("app", "secret", "https://openapi.koreainvestment.com:9443", "unit-test")
 		client.Client = &http.Client{Transport: transport}
 		client.SetAuthToken("test-token")
@@ -50,11 +59,11 @@ var _ = Describe("DCFReadiness", func() {
 		Expect(inputs["NetDebt"].Status).To(Equal(DCFInputDerived))
 		Expect(inputs["NetDebt"].Value).To(BeNumerically("~", 100, 1e-9))
 		Expect(inputs["RiskFreeRate"].Status).To(Equal(DCFInputExact))
-		Expect(inputs["RiskFreeRate"].Value).To(BeNumerically("~", 0.031, 1e-9))
+		Expect(inputs["RiskFreeRate"].Value).To(BeNumerically("~", 0.0285, 1e-9))
 		Expect(inputs["Beta"].Status).To(Equal(DCFInputDerived))
 		Expect(inputs["Beta"].Value).To(BeNumerically("~", 1.5, 1e-6))
-		Expect(inputs["MarketPremium"].Status).To(Equal(DCFInputAssumed))
-		Expect(inputs["MarketPremium"].Value).To(BeNumerically("~", defaultDCFMarketPremium, 1e-9))
+		Expect(inputs["MarketPremium"].Status).To(Equal(DCFInputExact))
+		Expect(inputs["MarketPremium"].Value).To(BeNumerically("~", 0.0417, 1e-9))
 		Expect(inputs["CostOfDebt"].Status).To(Equal(DCFInputDerived))
 		Expect(inputs["CostOfDebt"].Value).To(BeNumerically("~", 0.05, 1e-9))
 		Expect(inputs["EquityWeight"].Value).To(BeNumerically("~", 3500.0/3600.0, 1e-9))
@@ -67,6 +76,13 @@ var _ = Describe("DCFReadiness", func() {
 var _ = Describe("DCFValuation", func() {
 	It("builds a full DCF valuation from domestic stock data", func() {
 		transport := newDCFTransport()
+		Expect(os.Setenv(dcfRiskFreeBondCodeEnvKey, "KR2033022D33")).To(Succeed())
+		DeferCleanup(func() {
+			Expect(os.Unsetenv(dcfRiskFreeBondCodeEnvKey)).To(Succeed())
+			Expect(os.Unsetenv(dcfRiskFreeBondDivEnvKey)).To(Succeed())
+			Expect(os.Unsetenv(marketpremium.ProviderEnvKey)).To(Succeed())
+			Expect(os.Unsetenv(dcfMarketPremiumEnvKey)).To(Succeed())
+		})
 		client := auth.NewKIClient("app", "secret", "https://openapi.koreainvestment.com:9443", "unit-test")
 		client.Client = &http.Client{Transport: transport}
 		client.SetAuthToken("test-token")
@@ -76,9 +92,10 @@ var _ = Describe("DCFValuation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Valuation).NotTo(BeNil())
 		Expect(result.Financial.Revenue).To(BeNumerically("==", 3000))
-		Expect(result.CurrentPrice).To(BeNumerically("==", 72))
+		Expect(result.CurrentPrice).To(BeNumerically("==", 72000))
 		Expect(result.Financial.NetDebt).To(BeNumerically("~", 100, 1e-9))
-		Expect(result.Market.RiskFreeRate).To(BeNumerically("~", 0.031, 1e-9))
+		Expect(result.Market.RiskFreeRate).To(BeNumerically("~", 0.0285, 1e-9))
+		Expect(result.Market.MarketPremium).To(BeNumerically("~", 0.0417, 1e-9))
 		Expect(result.Market.Beta).To(BeNumerically("~", 1.5, 1e-6))
 		Expect(result.Valuation.WACC).To(BeNumerically(">", result.Assumptions.TerminalGrowth))
 		Expect(result.Valuation.TargetPrice).To(BeNumerically(">", 0))
@@ -105,7 +122,7 @@ func newDCFTransport() *testhelpers.MockTransport {
 			"output": map[string]any{
 				"lstn_stcn": "5969783",
 				"hts_avls":  "3500",
-				"stck_prpr": "72",
+				"stck_prpr": "72000",
 			},
 		})
 
@@ -164,18 +181,24 @@ func newDCFTransport() *testhelpers.MockTransport {
 		})
 
 	transport.New(baseURL).
-		Get("/uapi/domestic-stock/v1/quotations/comp-interest?FID_COND_MRKT_DIV_CODE=I&FID_COND_SCR_DIV_CODE=20702&FID_DIV_CLS_CODE=1&FID_DIV_CLS_CODE1=").
+		Get("/uapi/domestic-bond/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=B&FID_INPUT_ISCD=KR2033022D33").
 		Reply(http.StatusOK).
 		MatchHeader("authorization", "Bearer test-token").
 		JSON(map[string]any{
 			"rt_cd":  "0",
 			"msg_cd": "0",
 			"msg1":   "정상처리 되었습니다.",
-			"output1": []any{
-				map[string]any{"hts_kor_isnm": "국고채 10년", "bond_mnrt_prpr": "3.10"},
+			"output": map[string]any{
+				"hts_kor_isnm": "국고채 10년",
+				"stnd_iscd":    "KR2033022D33",
+				"ernn_rate":    "2.85",
 			},
-			"output2": []any{},
 		})
+
+	transport.New("https://pages.stern.nyu.edu").
+		Get("/adamodar/New_Home_Page/home.htm").
+		Reply(http.StatusOK).
+		BodyString(`<html><body>Implied ERP on February 1, 2026 = 4.17% (Trailing 12 month, with adjusted payout); Est. year-end ERP = 4.40%</body></html>`)
 
 	stockRows, indexRows := buildBetaRows(70)
 	transport.New(baseURL).
