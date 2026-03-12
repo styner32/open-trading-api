@@ -56,8 +56,9 @@ func ReverseDCF(fin FinancialData, market MarketData, assumptions Assumptions, p
 	effectiveUpperGrowth := effectiveRevenueGrowth(projection, config.UpperGrowth)
 
 	priceAt := func(growth float64) (*ValuationResult, error) {
-		projection.RevenueGrowth = growth
-		return Value(fin, market, assumptions, projection)
+		p := projection
+		p.RevenueGrowth = growth
+		return Value(fin, market, assumptions, p)
 	}
 
 	lowerValuation, err := priceAt(config.LowerGrowth)
