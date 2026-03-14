@@ -5,7 +5,8 @@ Created on Mon Apr 18 11:23:04 2022
 @author: KIS Developers
 """
 
-import time, copy
+import time
+import copy
 import yaml
 import requests
 import json
@@ -16,7 +17,7 @@ from collections import namedtuple
 from datetime import datetime
 
 with open(r'kisdev_vi.yaml', encoding='UTF-8') as f:
-    _cfg = yaml.load(f, Loader=yaml.FullLoader)
+    _cfg = yaml.safe_load(f)
 
 _TRENV = tuple()
 _last_auth_time = datetime.now()
