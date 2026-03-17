@@ -97,6 +97,26 @@ var _ = Describe("Service", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(seriesCode).To(Equal("BZM26"))
 	})
+
+	It("normalizes yahoo style future tickers and reuses loaded records", func() {
+		records := []MasterRecord{
+			{SeriesCode: "HGH26", ExchangeCode: "CME", ProductCode: "HG", IsMostActive: false, IsRecent: true},
+			{SeriesCode: "HGK26", ExchangeCode: "CME", ProductCode: "HG", IsMostActive: true, IsRecent: false},
+			{SeriesCode: "SIH26", ExchangeCode: "CME", ProductCode: "SI", IsMostActive: false, IsRecent: true},
+			{SeriesCode: "SIK26", ExchangeCode: "CME", ProductCode: "SI", IsMostActive: true, IsRecent: false},
+		}
+
+		Expect(NormalizeProductCode(" hg=f ")).To(Equal("HG"))
+		Expect(NormalizeProductCode("si")).To(Equal("SI"))
+
+		copperSeries, err := ResolveSeriesCodeByProductFromRecords(records, "HG=F")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(copperSeries).To(Equal("HGK26"))
+
+		silverSeries, err := ResolveSeriesCodeByProductFromRecords(records, "SI=F")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(silverSeries).To(Equal("SIK26"))
+	})
 })
 
 func buildMasterRow(seriesCode string, exchangeCode string, productCode string, mostActive bool, recent bool) string {

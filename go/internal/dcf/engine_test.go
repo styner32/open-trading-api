@@ -45,10 +45,49 @@ var _ = Describe("Value", func() {
 		Expect(result.WACC).To(BeNumerically("~", 0.07388, 1e-5))
 		Expect(result.TargetPrice).To(BeNumerically(">", 0))
 		Expect(result.TargetPriceRaw).To(BeNumerically(">", 0))
-		Expect(result.TargetPriceScale).To(BeNumerically("==", targetPriceKRWScale))
+		Expect(result.TargetPriceScale).To(BeNumerically("==", defaultTargetPriceScale))
 		Expect(result.TargetPriceUnit).To(Equal("KRW/share"))
 		Expect(result.EnterpriseValue).To(BeNumerically(">", result.EquityValue))
 		Expect(result.Forecast[0].Revenue).To(BeNumerically("~", 1060, 1e-6))
+	})
+
+	It("supports custom target price units for overseas equities", func() {
+		fin := FinancialData{
+			Revenue:      1000,
+			EBIT:         180,
+			EffectiveTax: 0.20,
+			DnA:          30,
+			CapEx:        35,
+			ChangeInNWC:  10,
+			SharesOut:    10,
+			NetDebt:      -20,
+		}
+		market := MarketData{
+			RiskFreeRate:  0.04,
+			Beta:          1.2,
+			MarketPremium: 0.05,
+			CostOfDebt:    0.05,
+			EquityWeight:  0.9,
+			DebtWeight:    0.1,
+		}
+
+		result, err := Value(fin, market, Assumptions{
+			ForecastYears:    5,
+			TerminalGrowth:   0.025,
+			TargetPriceScale: 1,
+			TargetPriceUnit:  "USD/share",
+		}, ProjectionModel{
+			RevenueGrowth: 0.08,
+			EBITMargin:    0.18,
+			DNAMargin:     0.03,
+			CapExMargin:   0.04,
+			NWCMargin:     0.01,
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.TargetPriceScale).To(BeNumerically("==", 1))
+		Expect(result.TargetPriceUnit).To(Equal("USD/share"))
+		Expect(result.TargetPrice).To(BeNumerically("==", result.TargetPriceRaw))
 	})
 
 	It("fails when wacc is not greater than terminal growth", func() {

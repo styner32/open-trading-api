@@ -240,6 +240,7 @@ func valueForecast(fin FinancialData, assumptions Assumptions, model ProjectionM
 	if fin.SharesOut <= 0 {
 		return nil, fmt.Errorf("shares out must be positive")
 	}
+	assumptions = normalizeAssumptions(assumptions)
 	if len(forecast) == 0 {
 		return nil, fmt.Errorf("forecast is empty")
 	}
@@ -265,7 +266,7 @@ func valueForecast(fin FinancialData, assumptions Assumptions, model ProjectionM
 	enterpriseValue := pvSum + terminalPresentValue
 	equityValue := enterpriseValue - fin.NetDebt
 	targetPriceRaw := equityValue / fin.SharesOut
-	targetPrice := targetPriceRaw * targetPriceKRWScale
+	targetPrice := targetPriceRaw * assumptions.TargetPriceScale
 	return &ValuationResult{
 		BaseFCF:              FCF(fin),
 		CostOfEquity:         costOfEquity,
@@ -275,8 +276,8 @@ func valueForecast(fin FinancialData, assumptions Assumptions, model ProjectionM
 		EnterpriseValue:      enterpriseValue,
 		EquityValue:          equityValue,
 		TargetPriceRaw:       targetPriceRaw,
-		TargetPriceScale:     targetPriceKRWScale,
-		TargetPriceUnit:      "KRW/share",
+		TargetPriceScale:     assumptions.TargetPriceScale,
+		TargetPriceUnit:      assumptions.TargetPriceUnit,
 		TargetPrice:          targetPrice,
 		Forecast:             pricedForecast,
 		Projection:           model,

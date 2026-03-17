@@ -70,7 +70,7 @@ func (s *Service) ResolveCrudeOilSeriesCode(ctx context.Context) (string, error)
 }
 
 func (s *Service) ResolveSeriesCodeByProduct(ctx context.Context, productCode string) (string, error) {
-	productCode = strings.ToUpper(strings.TrimSpace(productCode))
+	productCode = NormalizeProductCode(productCode)
 	if productCode == "" {
 		return "", errors.New("productCode is required")
 	}
@@ -78,6 +78,15 @@ func (s *Service) ResolveSeriesCodeByProduct(ctx context.Context, productCode st
 	records, err := s.LoadMasterRecords(ctx)
 	if err != nil {
 		return "", err
+	}
+
+	return ResolveSeriesCodeByProductFromRecords(records, productCode)
+}
+
+func ResolveSeriesCodeByProductFromRecords(records []MasterRecord, productCode string) (string, error) {
+	productCode = NormalizeProductCode(productCode)
+	if productCode == "" {
+		return "", errors.New("productCode is required")
 	}
 
 	candidates := make([]MasterRecord, 0)
@@ -108,6 +117,11 @@ func (s *Service) ResolveSeriesCodeByProduct(ctx context.Context, productCode st
 	})
 
 	return candidates[0].SeriesCode, nil
+}
+
+func NormalizeProductCode(productCode string) string {
+	productCode = strings.ToUpper(strings.TrimSpace(productCode))
+	return strings.TrimSuffix(productCode, "=F")
 }
 
 func (s *Service) LoadMasterRecords(ctx context.Context) ([]MasterRecord, error) {

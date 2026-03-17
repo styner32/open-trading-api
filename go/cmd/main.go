@@ -12,11 +12,14 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/commodityfuture"
+	"github.com/kis-open-api/go/internal/companyanalysis"
 	"github.com/kis-open-api/go/internal/dcf"
 	"github.com/kis-open-api/go/internal/domesticfutureoption"
 	"github.com/kis-open-api/go/internal/domesticstock"
 	"github.com/kis-open-api/go/internal/overseasstock"
 	"github.com/kis-open-api/go/internal/quadwitching"
+	"github.com/kis-open-api/go/internal/shippingindex"
 )
 
 func main() {
@@ -34,6 +37,39 @@ func main() {
 	ewySymbol := getOrDefault("EWY_SYMBOL", "EWY")
 	exchangeRateMarketDivCode := getOrDefault("EXCHANGE_RATE_MARKET_DIV_CODE", "X")
 	exchangeRateSymbol := getOrDefault("EXCHANGE_RATE_SYMBOL", "USDKRW")
+	copperFutureTicker := getOrDefault("COPPER_FUTURE_TICKER", "HG=F")
+	copperFutureProductCode := commodityfuture.NormalizeProductCode(getOrDefault("COPPER_FUTURE_PRODUCT_CODE", copperFutureTicker))
+	copperFutureCMEProductID := strings.TrimSpace(os.Getenv("COPPER_FUTURE_CME_PRODUCT_ID"))
+	goldFutureTicker := getOrDefault("GOLD_FUTURE_TICKER", "GC=F")
+	goldFutureProductCode := commodityfuture.NormalizeProductCode(getOrDefault("GOLD_FUTURE_PRODUCT_CODE", goldFutureTicker))
+	goldFutureCMEProductID := strings.TrimSpace(os.Getenv("GOLD_FUTURE_CME_PRODUCT_ID"))
+	silverFutureTicker := getOrDefault("SILVER_FUTURE_TICKER", "SI=F")
+	silverFutureProductCode := commodityfuture.NormalizeProductCode(getOrDefault("SILVER_FUTURE_PRODUCT_CODE", silverFutureTicker))
+	silverFutureCMEProductID := strings.TrimSpace(os.Getenv("SILVER_FUTURE_CME_PRODUCT_ID"))
+	commodityFutureProviderOrder := splitCSV(getOrDefault("COMMODITY_FUTURE_PROVIDER_ORDER", commodityfuture.DefaultProviderOrderCSV))
+	commodityFutureUserAgent := strings.TrimSpace(getOrDefault("COMMODITY_FUTURE_USER_AGENT", commodityfuture.DefaultUserAgent))
+	shippingIndexSymbols := splitCSV(getOrDefault("SHIPPING_INDEX_SYMBOLS", strings.Join(shippingindex.DefaultSymbols(), ",")))
+	companyAnalysisSymbol := strings.ToUpper(strings.TrimSpace(getOrDefault("COMPANY_ANALYSIS_SYMBOL", "NVDA")))
+	companyAnalysisBenchmarkSymbol := strings.ToUpper(strings.TrimSpace(getOrDefault("COMPANY_ANALYSIS_BENCHMARK_SYMBOL", "SPY")))
+	companyAnalysisForecastYears := getIntOrDefault("COMPANY_ANALYSIS_FORECAST_YEARS", 5)
+	companyAnalysisTerminalGrowth := getFloatOrDefault("COMPANY_ANALYSIS_TERMINAL_GROWTH", 0.025)
+	companyAnalysisBetaLookbackDays := getIntOrDefault("COMPANY_ANALYSIS_BETA_LOOKBACK_DAYS", 252)
+	companyAnalysisJSONFile := getOrDefault("COMPANY_ANALYSIS_JSON_FILE", ".cache/company_analysis.json")
+	companyAnalysisSECTickersCacheFile := getOrDefault("COMPANY_ANALYSIS_SEC_TICKERS_CACHE_FILE", ".cache/sec_company_tickers.json")
+	companyAnalysisSECCompanyFactsCacheFile := getOrDefault("COMPANY_ANALYSIS_SEC_COMPANYFACTS_CACHE_FILE", ".cache/sec_companyfacts.json")
+	companyAnalysisSECUserAgent := strings.TrimSpace(os.Getenv("COMPANY_ANALYSIS_SEC_USER_AGENT"))
+	if companyAnalysisSECUserAgent == "" {
+		companyAnalysisSECContactEmail := strings.TrimSpace(os.Getenv("COMPANY_ANALYSIS_SEC_CONTACT_EMAIL"))
+		if companyAnalysisSECContactEmail != "" {
+			companyAnalysisSECUserAgent = "open-trading-api/1.0 " + companyAnalysisSECContactEmail
+		}
+	}
+	if companyAnalysisSECUserAgent == "" {
+		companyAnalysisSECUserAgent = "open-trading-api/1.0 contact@example.com"
+	}
+	quadWitchingLookaheadDays := getIntOrDefault("QUAD_WITCHING_LOOKAHEAD_DAYS", 7)
+	quadWitchingGraceDays := getIntOrDefault("QUAD_WITCHING_GRACE_DAYS", 0)
+	quadWitchingForce := getBoolOrDefault("QUAD_WITCHING_FORCE", false)
 
 	client := auth.NewKIClient(appKey, secretKey, baseURL, userAgent)
 	client.SetTokenCachePath(tokenCachePath)
@@ -53,7 +89,17 @@ func main() {
 
 	svc := domesticstock.NewService(client)
 	futureSvc := domesticfutureoption.NewService(client)
+	commodityFutureSvc := commodityfuture.NewService(client.Client, commodityfuture.Config{
+		ProviderOrder: commodityFutureProviderOrder,
+		UserAgent:     commodityFutureUserAgent,
+	})
 	overseasStockSvc := overseasstock.NewService(client)
+	shippingIndexSvc := shippingindex.NewService(client)
+	companyAnalysisSvc := companyanalysis.NewService(client.Client, companyanalysis.Config{
+		SECUserAgent:             companyAnalysisSECUserAgent,
+		SECTickersCachePath:      companyAnalysisSECTickersCacheFile,
+		SECCompanyFactsCachePath: companyAnalysisSECCompanyFactsCacheFile,
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -68,20 +114,21 @@ func main() {
 	mustAPIResult("market-time", respMarketTime, err, "output1")
 	printMarketTimeSummary(respMarketTime)
 	businessDate := resolveBusinessDateFromMarketTime(respMarketTime, today)
-	quadSnapshot := quadwitching.SnapshotExport{
-		GeneratedAt:    time.Now().Format(time.RFC3339),
-		BusinessDate:   businessDate,
-		EndpointStates: map[string]quadwitching.EndpointSnapshot{},
-		Notes: []string{
-			"futures inquire-time-fuopccnl and inquire-member are experimental because no verified local sample existed in the repository",
-		},
+	quadRunWindow, err := quadwitching.EvaluateRunWindow(businessDate, quadWitchingLookaheadDays, quadWitchingGraceDays)
+	if err != nil {
+		log.Printf("quad witching schedule error: %v", err)
+		quadRunWindow = quadwitching.RunWindow{
+			BusinessDate:  businessDate,
+			LookaheadDays: quadWitchingLookaheadDays,
+			GraceDays:     quadWitchingGraceDays,
+		}
 	}
-	quadSnapshot.EndpointStates["market_time"] = quadwitching.NewEndpointSnapshot(respMarketTime, nil)
+	shouldRunQuadWitching := quadWitchingForce || quadRunWindow.ShouldRun
+	printQuadWitchingGateSummary(quadRunWindow, quadWitchingForce, shouldRunQuadWitching)
 
 	respKOSPI, err := svc.InquireIndexPrice(ctx, "0001")
 	mustAPIResult("inquire-index-price (KOSPI 0001)", respKOSPI, err, "output")
 	printIndexSummary("KOSPI", respKOSPI)
-	quadSnapshot.EndpointStates["kospi_index_price"] = quadwitching.NewEndpointSnapshot(respKOSPI, nil)
 
 	respKOSDAQ, err := svc.InquireIndexPrice(ctx, "1001")
 	mustAPIResult("inquire-index-price (KOSDAQ 1001)", respKOSDAQ, err, "output")
@@ -104,7 +151,6 @@ func main() {
 	respProgramTrade, err := svc.CompProgramTradeToday(ctx, "K")
 	mustAPIResult("comp-program-trade-today (KOSPI)", respProgramTrade, err, "output")
 	printProgramTradeSummary(respProgramTrade)
-	quadSnapshot.EndpointStates["program_trade_today"] = quadwitching.NewEndpointSnapshot(respProgramTrade, nil)
 
 	respVI, err := svc.InquireVIStatus(ctx, businessDate)
 	mustAPIResult("inquire-vi-status", respVI, err, "output")
@@ -114,113 +160,129 @@ func main() {
 	mustAPIResult("mktfunds", respFunds, err, "output")
 	printMarketFundsSummary(respFunds)
 
-	quadWitchingFutures, err := futureSvc.ResolveNearMonthKOSPI200Futures(ctx, businessDate)
-	if err != nil {
-		log.Printf("quad witching futures code resolve error: %v", err)
-		quadSnapshot.Notes = append(quadSnapshot.Notes, "futures resolver error: "+err.Error())
-	} else {
-		quadSnapshot.FuturesCode = quadWitchingFutures.Record.ShortCode
-		quadSnapshot.FuturesName = quadWitchingFutures.Record.Name
-		quadSnapshot.MasterCache = quadWitchingFutures.MasterCachePath
-		quadSnapshot.MasterJSON = quadWitchingFutures.MasterJSONPath
-		printQuadWitchingContractSummary(quadWitchingFutures)
+	if shouldRunQuadWitching {
+		quadSnapshot := quadwitching.SnapshotExport{
+			GeneratedAt:    time.Now().Format(time.RFC3339),
+			BusinessDate:   businessDate,
+			EndpointStates: map[string]quadwitching.EndpointSnapshot{},
+			Notes: []string{
+				"futures inquire-time-fuopccnl and inquire-member are experimental because no verified local sample existed in the repository",
+			},
+		}
+		quadSnapshot.EndpointStates["market_time"] = quadwitching.NewEndpointSnapshot(respMarketTime, nil)
+		quadSnapshot.EndpointStates["kospi_index_price"] = quadwitching.NewEndpointSnapshot(respKOSPI, nil)
+		quadSnapshot.EndpointStates["program_trade_today"] = quadwitching.NewEndpointSnapshot(respProgramTrade, nil)
 
-		futuresCode := quadWitchingFutures.Record.ShortCode
-		futuresMarketDivCode := getOrDefault("QUAD_WITCHING_FUTURES_MARKET_DIV_CODE", "F")
+		quadWitchingFutures, err := futureSvc.ResolveNearMonthKOSPI200Futures(ctx, businessDate)
+		if err != nil {
+			log.Printf("quad witching futures code resolve error: %v", err)
+			quadSnapshot.Notes = append(quadSnapshot.Notes, "futures resolver error: "+err.Error())
+		} else {
+			quadSnapshot.FuturesCode = quadWitchingFutures.Record.ShortCode
+			quadSnapshot.FuturesName = quadWitchingFutures.Record.Name
+			quadSnapshot.MasterCache = quadWitchingFutures.MasterCachePath
+			quadSnapshot.MasterJSON = quadWitchingFutures.MasterJSONPath
+			printQuadWitchingContractSummary(quadWitchingFutures)
 
-		respFuturePrice, err := futureSvc.InquirePrice(ctx, futuresMarketDivCode, futuresCode)
-		quadSnapshot.EndpointStates["future_price"] = quadwitching.NewEndpointSnapshot(respFuturePrice, err)
-		if optionalAPIResult("domestic-futureoption inquire-price ("+futuresCode+")", respFuturePrice, err, "output1") {
-			printFuturePriceSummary(respFuturePrice)
+			futuresCode := quadWitchingFutures.Record.ShortCode
+			futuresMarketDivCode := getOrDefault("QUAD_WITCHING_FUTURES_MARKET_DIV_CODE", "F")
+
+			respFuturePrice, err := futureSvc.InquirePrice(ctx, futuresMarketDivCode, futuresCode)
+			quadSnapshot.EndpointStates["future_price"] = quadwitching.NewEndpointSnapshot(respFuturePrice, err)
+			if optionalAPIResult("domestic-futureoption inquire-price ("+futuresCode+")", respFuturePrice, err, "output1") {
+				printFuturePriceSummary(respFuturePrice)
+			}
+
+			respFutureBoardTop, err := futureSvc.DisplayBoardTop(ctx, futuresMarketDivCode, futuresCode, "", "", "", "")
+			quadSnapshot.EndpointStates["future_board_top"] = quadwitching.NewEndpointSnapshot(respFutureBoardTop, err)
+			if optionalAPIResult("domestic-futureoption display-board-top ("+futuresCode+")", respFutureBoardTop, err, "output1") {
+				printFutureBoardTopSummary(respFutureBoardTop)
+			}
+
+			respFutureBoard, err := futureSvc.DisplayBoardFutures(ctx, futuresMarketDivCode, "", "")
+			quadSnapshot.EndpointStates["future_board"] = quadwitching.NewEndpointSnapshot(respFutureBoard, err)
+			if optionalAPIResult("domestic-futureoption display-board-futures", respFutureBoard, err, "output") {
+				printFutureBoardSummary(respFutureBoard, futuresCode)
+			}
+
+			respFutureTimeChart, err := futureSvc.InquireTimeFuopChartPrice(
+				ctx,
+				futuresMarketDivCode,
+				futuresCode,
+				getOrDefault("QUAD_WITCHING_FUTURES_HOUR_CLS_CODE", "60"),
+				getOrDefault("QUAD_WITCHING_FUTURES_INCLUDE_PAST_DATA", "Y"),
+				getOrDefault("QUAD_WITCHING_FUTURES_INCLUDE_FAKE_TICK", "N"),
+				businessDate,
+				getOrDefault("QUAD_WITCHING_FUTURES_INPUT_HOUR", time.Now().Format("150405")),
+			)
+			quadSnapshot.EndpointStates["future_time_chart"] = quadwitching.NewEndpointSnapshot(respFutureTimeChart, err)
+			if optionalAPIResult("domestic-futureoption inquire-time-fuopchartprice ("+futuresCode+")", respFutureTimeChart, err, "output2") {
+				printFutureTimeChartSummary(respFutureTimeChart)
+			}
+
+			respFutureExpected, err := futureSvc.ExpPriceTrend(ctx, futuresCode, futuresMarketDivCode)
+			quadSnapshot.EndpointStates["future_expected_price"] = quadwitching.NewEndpointSnapshot(respFutureExpected, err)
+			if optionalAPIResult("domestic-futureoption exp-price-trend ("+futuresCode+")", respFutureExpected, err, "output2") {
+				printFutureExpectedPriceSummary(respFutureExpected)
+			}
+
+			respFutureCCNL, err := futureSvc.InquireTimeFuopCCNL(ctx, futuresMarketDivCode, futuresCode)
+			quadSnapshot.EndpointStates["future_time_conclusion_experimental"] = quadwitching.NewEndpointSnapshot(respFutureCCNL, err)
+			if optionalAPIResult("domestic-futureoption inquire-time-fuopccnl ("+futuresCode+")", respFutureCCNL, err, "output") {
+				printFutureExecutionSummary(respFutureCCNL)
+			}
+
+			respFutureMember, err := futureSvc.InquireMember(ctx, futuresMarketDivCode, futuresCode)
+			quadSnapshot.EndpointStates["future_member_experimental"] = quadwitching.NewEndpointSnapshot(respFutureMember, err)
+			if optionalAPIResult("domestic-futureoption inquire-member ("+futuresCode+")", respFutureMember, err, "output") {
+				printFutureMemberSummary(respFutureMember)
+			}
 		}
 
-		respFutureBoardTop, err := futureSvc.DisplayBoardTop(ctx, futuresMarketDivCode, futuresCode, "", "", "", "")
-		quadSnapshot.EndpointStates["future_board_top"] = quadwitching.NewEndpointSnapshot(respFutureBoardTop, err)
-		if optionalAPIResult("domestic-futureoption display-board-top ("+futuresCode+")", respFutureBoardTop, err, "output1") {
-			printFutureBoardTopSummary(respFutureBoardTop)
+		respQuadInvestor, err := svc.InquireInvestor(ctx, "J", getOrDefault("QUAD_WITCHING_INVESTOR_SYMBOL", "0001"))
+		quadSnapshot.EndpointStates["kospi_investor"] = quadwitching.NewEndpointSnapshot(respQuadInvestor, err)
+		if optionalAPIResult("domestic-stock inquire-investor", respQuadInvestor, err, "output") {
+			printInvestorTrendSummary("Quad Witching KOSPI Investor Trend", respQuadInvestor)
 		}
 
-		respFutureBoard, err := futureSvc.DisplayBoardFutures(ctx, futuresMarketDivCode, "", "")
-		quadSnapshot.EndpointStates["future_board"] = quadwitching.NewEndpointSnapshot(respFutureBoard, err)
-		if optionalAPIResult("domestic-futureoption display-board-futures", respFutureBoard, err, "output") {
-			printFutureBoardSummary(respFutureBoard, futuresCode)
+		respKOSPI200Investor, err := svc.InquireInvestor(ctx, "J", getOrDefault("QUAD_WITCHING_KOSPI200_INVESTOR_SYMBOL", "2001"))
+		quadSnapshot.EndpointStates["kospi200_investor"] = quadwitching.NewEndpointSnapshot(respKOSPI200Investor, err)
+		if optionalAPIResult("domestic-stock inquire-investor (KOSPI200)", respKOSPI200Investor, err, "output") {
+			printInvestorTrendSummary("Quad Witching KOSPI200 Investor Trend", respKOSPI200Investor)
 		}
 
-		respFutureTimeChart, err := futureSvc.InquireTimeFuopChartPrice(
+		respForeignTotal, err := svc.ForeignInstitutionTotal(
 			ctx,
-			futuresMarketDivCode,
-			futuresCode,
-			getOrDefault("QUAD_WITCHING_FUTURES_HOUR_CLS_CODE", "60"),
-			getOrDefault("QUAD_WITCHING_FUTURES_INCLUDE_PAST_DATA", "Y"),
-			getOrDefault("QUAD_WITCHING_FUTURES_INCLUDE_FAKE_TICK", "N"),
-			businessDate,
-			getOrDefault("QUAD_WITCHING_FUTURES_INPUT_HOUR", time.Now().Format("150405")),
+			getOrDefault("QUAD_WITCHING_FOREIGN_MARKET_DIV_CODE", "V"),
+			getOrDefault("QUAD_WITCHING_FOREIGN_SCREEN_DIV_CODE", "16449"),
+			getOrDefault("QUAD_WITCHING_FOREIGN_INPUT_ISCD", "0000"),
+			getOrDefault("QUAD_WITCHING_FOREIGN_DIV_CLS_CODE", "1"),
+			getOrDefault("QUAD_WITCHING_FOREIGN_RANK_SORT_CODE", "0"),
+			getOrDefault("QUAD_WITCHING_FOREIGN_ETC_CLS_CODE", "1"),
 		)
-		quadSnapshot.EndpointStates["future_time_chart"] = quadwitching.NewEndpointSnapshot(respFutureTimeChart, err)
-		if optionalAPIResult("domestic-futureoption inquire-time-fuopchartprice ("+futuresCode+")", respFutureTimeChart, err, "output2") {
-			printFutureTimeChartSummary(respFutureTimeChart)
+		quadSnapshot.EndpointStates["foreign_institution_total"] = quadwitching.NewEndpointSnapshot(respForeignTotal, err)
+		if optionalAPIResult("domestic-stock foreign-institution-total", respForeignTotal, err, "output") {
+			printForeignInstitutionSummary(respForeignTotal)
 		}
 
-		respFutureExpected, err := futureSvc.ExpPriceTrend(ctx, futuresCode, futuresMarketDivCode)
-		quadSnapshot.EndpointStates["future_expected_price"] = quadwitching.NewEndpointSnapshot(respFutureExpected, err)
-		if optionalAPIResult("domestic-futureoption exp-price-trend ("+futuresCode+")", respFutureExpected, err, "output2") {
-			printFutureExpectedPriceSummary(respFutureExpected)
+		respAskingPrice, err := svc.InquireAskingPriceExpCCN(ctx, "J", getOrDefault("QUAD_WITCHING_AUCTION_SYMBOL", targetSymbol))
+		quadSnapshot.EndpointStates["asking_price_expected"] = quadwitching.NewEndpointSnapshot(respAskingPrice, err)
+		if optionalAPIResult("domestic-stock inquire-asking-price-exp-ccn", respAskingPrice, err, "output1") {
+			printAskingPriceExpSummary(getOrDefault("QUAD_WITCHING_AUCTION_SYMBOL", targetSymbol), respAskingPrice)
 		}
 
-		respFutureCCNL, err := futureSvc.InquireTimeFuopCCNL(ctx, futuresMarketDivCode, futuresCode)
-		quadSnapshot.EndpointStates["future_time_conclusion_experimental"] = quadwitching.NewEndpointSnapshot(respFutureCCNL, err)
-		if optionalAPIResult("domestic-futureoption inquire-time-fuopccnl ("+futuresCode+")", respFutureCCNL, err, "output") {
-			printFutureExecutionSummary(respFutureCCNL)
+		quadSnapshotPath := resolveQuadWitchingSnapshotPath(
+			getOrDefault("QUAD_WITCHING_SNAPSHOT_JSON_FILE", ".cache/quad_witching_snapshot.json"),
+			businessDate,
+			quadSnapshot.FuturesCode,
+		)
+		if err := quadwitching.WriteSnapshot(quadSnapshotPath, quadSnapshot); err != nil {
+			log.Printf("quad witching snapshot export error: %v", err)
+		} else {
+			printQuadWitchingSnapshotSummary(quadSnapshotPath, quadSnapshot)
 		}
-
-		respFutureMember, err := futureSvc.InquireMember(ctx, futuresMarketDivCode, futuresCode)
-		quadSnapshot.EndpointStates["future_member_experimental"] = quadwitching.NewEndpointSnapshot(respFutureMember, err)
-		if optionalAPIResult("domestic-futureoption inquire-member ("+futuresCode+")", respFutureMember, err, "output") {
-			printFutureMemberSummary(respFutureMember)
-		}
-	}
-
-	respQuadInvestor, err := svc.InquireInvestor(ctx, "J", getOrDefault("QUAD_WITCHING_INVESTOR_SYMBOL", "0001"))
-	quadSnapshot.EndpointStates["kospi_investor"] = quadwitching.NewEndpointSnapshot(respQuadInvestor, err)
-	if optionalAPIResult("domestic-stock inquire-investor", respQuadInvestor, err, "output") {
-		printInvestorTrendSummary("Quad Witching KOSPI Investor Trend", respQuadInvestor)
-	}
-
-	respKOSPI200Investor, err := svc.InquireInvestor(ctx, "J", getOrDefault("QUAD_WITCHING_KOSPI200_INVESTOR_SYMBOL", "2001"))
-	quadSnapshot.EndpointStates["kospi200_investor"] = quadwitching.NewEndpointSnapshot(respKOSPI200Investor, err)
-	if optionalAPIResult("domestic-stock inquire-investor (KOSPI200)", respKOSPI200Investor, err, "output") {
-		printInvestorTrendSummary("Quad Witching KOSPI200 Investor Trend", respKOSPI200Investor)
-	}
-
-	respForeignTotal, err := svc.ForeignInstitutionTotal(
-		ctx,
-		getOrDefault("QUAD_WITCHING_FOREIGN_MARKET_DIV_CODE", "V"),
-		getOrDefault("QUAD_WITCHING_FOREIGN_SCREEN_DIV_CODE", "16449"),
-		getOrDefault("QUAD_WITCHING_FOREIGN_INPUT_ISCD", "0000"),
-		getOrDefault("QUAD_WITCHING_FOREIGN_DIV_CLS_CODE", "1"),
-		getOrDefault("QUAD_WITCHING_FOREIGN_RANK_SORT_CODE", "0"),
-		getOrDefault("QUAD_WITCHING_FOREIGN_ETC_CLS_CODE", "1"),
-	)
-	quadSnapshot.EndpointStates["foreign_institution_total"] = quadwitching.NewEndpointSnapshot(respForeignTotal, err)
-	if optionalAPIResult("domestic-stock foreign-institution-total", respForeignTotal, err, "output") {
-		printForeignInstitutionSummary(respForeignTotal)
-	}
-
-	respAskingPrice, err := svc.InquireAskingPriceExpCCN(ctx, "J", getOrDefault("QUAD_WITCHING_AUCTION_SYMBOL", targetSymbol))
-	quadSnapshot.EndpointStates["asking_price_expected"] = quadwitching.NewEndpointSnapshot(respAskingPrice, err)
-	if optionalAPIResult("domestic-stock inquire-asking-price-exp-ccn", respAskingPrice, err, "output1") {
-		printAskingPriceExpSummary(getOrDefault("QUAD_WITCHING_AUCTION_SYMBOL", targetSymbol), respAskingPrice)
-	}
-
-	quadSnapshotPath := resolveQuadWitchingSnapshotPath(
-		getOrDefault("QUAD_WITCHING_SNAPSHOT_JSON_FILE", ".cache/quad_witching_snapshot.json"),
-		businessDate,
-		quadSnapshot.FuturesCode,
-	)
-	if err := quadwitching.WriteSnapshot(quadSnapshotPath, quadSnapshot); err != nil {
-		log.Printf("quad witching snapshot export error: %v", err)
 	} else {
-		printQuadWitchingSnapshotSummary(quadSnapshotPath, quadSnapshot)
+		log.Printf("skipping quad witching stats: outside configured window for %s", quadRunWindow.QuadDate)
 	}
 
 	ewyExchangeCode, err := overseasStockSvc.ResolveEWYExchangeCode(ctx)
@@ -251,6 +313,94 @@ func main() {
 		"output1",
 	)
 	printExchangeRateSummary(exchangeRateMarketDivCode, exchangeRateSymbol, respExchangeRate)
+
+	printConfiguredCommodityFutureSummary(
+		ctx,
+		commodityFutureSvc,
+		configuredCommodityInstrument("Copper", copperFutureTicker, copperFutureProductCode, copperFutureCMEProductID),
+	)
+	printConfiguredCommodityFutureSummary(
+		ctx,
+		commodityFutureSvc,
+		configuredCommodityInstrument("Gold", goldFutureTicker, goldFutureProductCode, goldFutureCMEProductID),
+	)
+	printConfiguredCommodityFutureSummary(
+		ctx,
+		commodityFutureSvc,
+		configuredCommodityInstrument("Silver", silverFutureTicker, silverFutureProductCode, silverFutureCMEProductID),
+	)
+
+	shippingQuotes, err := shippingIndexSvc.Quotes(ctx, shippingIndexSymbols)
+	if err != nil {
+		log.Printf("shipping index error: %v", err)
+	}
+	printShippingIndexSummary(shippingQuotes)
+
+	companyAnalysisResult, err := companyAnalysisSvc.Analyze(ctx, companyAnalysisSymbol, companyanalysis.AnalysisOptions{
+		BenchmarkSymbol:  companyAnalysisBenchmarkSymbol,
+		ForecastYears:    companyAnalysisForecastYears,
+		TerminalGrowth:   companyAnalysisTerminalGrowth,
+		BetaLookbackDays: companyAnalysisBetaLookbackDays,
+		RiskFreeRate:     getOptionalFloat("COMPANY_ANALYSIS_RISK_FREE_RATE"),
+		Beta:             getOptionalFloat("COMPANY_ANALYSIS_BETA"),
+		MarketPremium:    getOptionalFloat("COMPANY_ANALYSIS_MARKET_PREMIUM"),
+		CostOfDebt:       getOptionalFloat("COMPANY_ANALYSIS_COST_OF_DEBT"),
+		NetDebt:          getOptionalFloat("COMPANY_ANALYSIS_NET_DEBT"),
+	})
+	if err != nil {
+		log.Printf("company analysis error: %v", err)
+	} else {
+		printCompanyAnalysisSummary(companyAnalysisResult)
+
+		var companyReverseDCF *dcf.ReverseDCFResult
+		if companyAnalysisResult.Quote.Price > 0 {
+			companyReverseDCF, err = dcf.ReverseDCF(
+				companyAnalysisResult.Financial,
+				companyAnalysisResult.Market,
+				companyAnalysisResult.Assumptions,
+				companyAnalysisResult.Projection,
+				companyAnalysisResult.Quote.Price,
+				dcf.ReverseDCFConfig{},
+			)
+			if err != nil {
+				log.Printf("company reverse DCF error: %v", err)
+			} else {
+				printCompanyReverseDCFSummary(companyAnalysisResult, companyReverseDCF)
+			}
+		}
+
+		companyMonteCarloConfig := dcf.MonteCarloConfig{
+			Iterations:           getIntOrDefault("DCF_MONTE_CARLO_ITERATIONS", 2000),
+			Workers:              getIntOrDefault("DCF_MONTE_CARLO_WORKERS", 0),
+			RevenueGrowthStdDev:  getFloatOrDefault("DCF_MONTE_CARLO_GROWTH_STDDEV", 0.02),
+			WACCStdDev:           getFloatOrDefault("DCF_MONTE_CARLO_WACC_STDDEV", 0.01),
+			TerminalGrowthStdDev: getFloatOrDefault("DCF_MONTE_CARLO_TERMINAL_STDDEV", 0.005),
+		}
+		companyMonteCarlo, companyMonteCarloErr := dcf.MonteCarlo(
+			companyAnalysisResult.Financial,
+			companyAnalysisResult.Market,
+			companyAnalysisResult.Assumptions,
+			companyAnalysisResult.Projection,
+			companyMonteCarloConfig,
+		)
+		companyAnalysisJSONPath := resolveCompanyAnalysisJSONPath(companyAnalysisJSONFile, businessDate, companyAnalysisSymbol)
+		if companyMonteCarloErr != nil {
+			log.Printf("company monte carlo DCF error: %v", companyMonteCarloErr)
+		} else {
+			printCompanyMonteCarloSummary(companyMonteCarlo, companyAnalysisJSONPath)
+		}
+		if err := companyanalysis.WriteExport(companyAnalysisJSONPath, companyanalysis.Export{
+			GeneratedAt:   time.Now().Format(time.RFC3339),
+			BusinessDate:  businessDate,
+			Symbol:        companyAnalysisSymbol,
+			Result:        companyAnalysisResult,
+			ReverseDCF:    companyReverseDCF,
+			MonteCarloCfg: companyMonteCarloConfig,
+			MonteCarlo:    companyMonteCarlo,
+		}); err != nil {
+			log.Printf("company analysis JSON export error: %v", err)
+		}
+	}
 
 	rsiResult, err := svc.RSIFromDailyChart(ctx, targetSymbol, 14, fromDate, today)
 	if err != nil {
@@ -549,6 +699,31 @@ func getIntOrDefault(key string, defaultValue int) int {
 	return parsed
 }
 
+func getBoolOrDefault(key string, defaultValue bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		log.Fatalf("%s must be a boolean: %v", key, err)
+	}
+	return parsed
+}
+
+func getOptionalFloat(key string) *float64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		log.Fatalf("%s must be a float: %v", key, err)
+	}
+	return &parsed
+}
+
 func printMarketTimeSummary(resp *auth.RESTResponse) {
 	row := firstRow(resp, "output1")
 	if row == nil {
@@ -568,6 +743,30 @@ func printMarketTimeSummary(resp *auth.RESTResponse) {
 		formatSummaryLine("Now", fieldString(row, "time")),
 		formatSummaryLine("Open / Close", joinNonEmpty(" / ", fieldString(row, "s_time"), fieldString(row, "e_time"))),
 		formatSummaryLine("Business Days", dates),
+	})
+}
+
+func printQuadWitchingGateSummary(window quadwitching.RunWindow, forceRun bool, shouldRun bool) {
+	status := "skip"
+	if shouldRun {
+		status = "run"
+	}
+
+	reason := "outside run window"
+	if forceRun {
+		reason = "forced by QUAD_WITCHING_FORCE"
+	} else if window.ShouldRun {
+		reason = "inside quad witching window"
+	}
+
+	printSummaryBlock("Quad Witching Gate", []string{
+		formatSummaryLine("Business Date", window.BusinessDate),
+		formatSummaryLine("Target Date", window.QuadDate),
+		formatSummaryLine("Window", joinNonEmpty(" ~ ", window.WindowStart, window.WindowEnd)),
+		formatSummaryLine("Lookahead / Grace", fmt.Sprintf("%d / %d day(s)", window.LookaheadDays, window.GraceDays)),
+		formatSummaryLine("Days Until Target", strconv.Itoa(window.DaysUntil)),
+		formatSummaryLine("Status", status),
+		formatSummaryLine("Reason", reason),
 	})
 }
 
@@ -824,6 +1023,126 @@ func printMonteCarloSummary(result *dcf.MonteCarloResult, jsonPath string) {
 			formatFloat(result.Min),
 			formatFloat(result.Max),
 		)),
+		formatSummaryLine("JSON Export", jsonPath),
+	})
+}
+
+func printCompanyAnalysisSummary(result *companyanalysis.Result) {
+	if result == nil || result.Valuation == nil {
+		log.Printf("company analysis summary: result or valuation is nil: %v", result)
+		return
+	}
+
+	upside := ""
+	if result.Quote.Price > 0 {
+		upside = formatPercent((result.Valuation.TargetPrice / result.Quote.Price) - 1)
+	}
+
+	lines := []string{
+		formatSummaryLine("Company / Symbol", joinNonEmpty(" / ", result.CompanyName, result.Symbol)),
+		formatSummaryLine("CIK / Benchmark", joinNonEmpty(" / ", result.CIK, result.BenchmarkSymbol)),
+		formatSummaryLine("Quote", joinNonEmpty(" ", formatMoney(result.Quote.Currency, result.Quote.Price), "on", result.Quote.PriceDate)),
+		formatSummaryLine("Previous / Change", fmt.Sprintf("%s / %s (%s)",
+			formatMoney(result.Quote.Currency, result.Quote.PreviousClose),
+			formatSignedMoney(result.Quote.Currency, result.Quote.Change),
+			formatPercentPoints(result.Quote.ChangePercent),
+		)),
+		formatSummaryLine("Revenue / EBIT / Net Income", fmt.Sprintf("%s / %s / %s",
+			formatMoney(result.Quote.Currency, result.Financials[0].Revenue),
+			formatMoney(result.Quote.Currency, result.Financials[0].EBIT),
+			formatMoney(result.Quote.Currency, result.Financials[0].NetIncome),
+		)),
+		formatSummaryLine("Cash / Debt / Net Debt", fmt.Sprintf("%s / %s / %s",
+			formatMoney(result.Quote.Currency, result.Financials[0].Cash),
+			formatMoney(result.Quote.Currency, result.Financials[0].TotalDebt),
+			formatMoney(result.Quote.Currency, result.KeyMetrics.NetDebt),
+		)),
+		formatSummaryLine("Market Cap / EV", fmt.Sprintf("%s / %s",
+			formatMoney(result.Quote.Currency, result.KeyMetrics.MarketCap),
+			formatMoney(result.Quote.Currency, result.KeyMetrics.EnterpriseValue),
+		)),
+		formatSummaryLine("Growth / Op Margin / ROE", fmt.Sprintf("%s / %s / %s",
+			formatPercent(result.KeyMetrics.RevenueGrowth),
+			formatPercent(result.KeyMetrics.OperatingMargin),
+			formatPercent(result.KeyMetrics.ROE),
+		)),
+		formatSummaryLine("Current Ratio / Debt To Equity", fmt.Sprintf("%s / %s",
+			formatFloat(result.KeyMetrics.CurrentRatio),
+			formatFloat(result.KeyMetrics.DebtToEquity),
+		)),
+		formatSummaryLine("Risk Free / Beta / MRP", fmt.Sprintf("%s / %s / %s",
+			formatPercent(result.Market.RiskFreeRate),
+			formatFloat(result.Market.Beta),
+			formatPercent(result.Market.MarketPremium),
+		)),
+		formatSummaryLine("Cost Of Debt / WACC", fmt.Sprintf("%s / %s",
+			formatPercent(result.Market.CostOfDebt),
+			formatPercent(result.Valuation.WACC),
+		)),
+		formatSummaryLine("Target Price", joinNonEmpty(" ", formatMoney(result.Quote.Currency, result.Valuation.TargetPrice), "("+result.Valuation.TargetPriceUnit+")")),
+		formatSummaryLine("Upside / Downside", upside),
+		formatSummaryLine("Projection", fmt.Sprintf("growth=%s ebit=%s dna=%s capex=%s nwc=%s",
+			formatPercent(result.Projection.RevenueGrowth),
+			formatPercent(result.Projection.EBITMargin),
+			formatPercent(result.Projection.DNAMargin),
+			formatPercent(result.Projection.CapExMargin),
+			formatPercent(result.Projection.NWCMargin),
+		)),
+	}
+
+	for i, record := range result.Financials {
+		if i >= 3 {
+			break
+		}
+		lines = append(lines, formatSummaryLine(
+			fmt.Sprintf("FY %d", record.FiscalYear),
+			fmt.Sprintf("rev=%s ebit=%s cash=%s debt=%s",
+				formatMoney(result.Quote.Currency, record.Revenue),
+				formatMoney(result.Quote.Currency, record.EBIT),
+				formatMoney(result.Quote.Currency, record.Cash),
+				formatMoney(result.Quote.Currency, record.TotalDebt),
+			),
+		))
+	}
+
+	for i, note := range result.Notes {
+		if i >= 3 {
+			break
+		}
+		lines = append(lines, formatSummaryLine(fmt.Sprintf("Note %d", i+1), note))
+	}
+
+	printSummaryBlock("Company Analysis Summary", lines)
+}
+
+func printCompanyReverseDCFSummary(result *companyanalysis.Result, reverse *dcf.ReverseDCFResult) {
+	if result == nil || reverse == nil || reverse.Valuation == nil {
+		return
+	}
+
+	printSummaryBlock("Company Reverse DCF Summary", []string{
+		formatSummaryLine("Market Price", formatMoney(result.Quote.Currency, result.Quote.Price)),
+		formatSummaryLine("Implied Revenue Growth", formatPercent(reverse.ImpliedRevenueGrowth)),
+		formatSummaryLine("Iterations", fmt.Sprintf("%d", reverse.Iterations)),
+		formatSummaryLine("Price Error", formatMoney(result.Quote.Currency, reverse.PriceError)),
+		formatSummaryLine("Solved WACC", formatPercent(reverse.Valuation.WACC)),
+	})
+}
+
+func printCompanyMonteCarloSummary(result *dcf.MonteCarloResult, jsonPath string) {
+	if result == nil {
+		return
+	}
+
+	printSummaryBlock("Company Monte Carlo DCF Summary", []string{
+		formatSummaryLine("Requested / Valid / Invalid", fmt.Sprintf("%d / %d / %d", result.RequestedIterations, result.ValidIterations, result.InvalidIterations)),
+		formatSummaryLine("Mean", formatFloat(result.Mean)),
+		formatSummaryLine("P10 / P50 / P90", fmt.Sprintf("%s / %s / %s",
+			formatFloat(result.P10),
+			formatFloat(result.P50),
+			formatFloat(result.P90),
+		)),
+		formatSummaryLine("Min / Max", fmt.Sprintf("%s / %s", formatFloat(result.Min), formatFloat(result.Max))),
 		formatSummaryLine("JSON Export", jsonPath),
 	})
 }
@@ -1188,27 +1507,48 @@ func printQuadWitchingSnapshotSummary(path string, snapshot quadwitching.Snapsho
 	})
 }
 
-func printOverseasFutureSummary(name string, resp *auth.RESTResponse) {
-	row := firstRow(resp, "output1")
-	if row == nil {
+func printConfiguredCommodityFutureSummary(
+	ctx context.Context,
+	svc *commodityfuture.Service,
+	instrument commodityfuture.Instrument,
+) {
+	quote, err := svc.Quote(ctx, instrument)
+	if err != nil {
+		log.Printf("%s future quote error: %v", instrument.Name, err)
+		return
+	}
+
+	title := joinNonEmpty(" ", instrument.Name, instrument.Symbol)
+	printCommodityFutureSummary(title, quote)
+}
+
+func printCommodityFutureSummary(name string, quote *commodityfuture.Quote) {
+	if quote == nil {
 		return
 	}
 
 	printSummaryBlock(name+" Summary", []string{
-		formatSummaryLine("Current", firstNonEmpty(row, "last_price")),
-		formatSummaryLine("Change", firstNonEmpty(row, "prev_diff_price")),
-		formatSummaryLine("Rate", firstNonEmpty(row, "prev_diff_rate")),
+		formatSummaryLine("Provider", commodityProviderPathText(quote.ProviderPath)),
+		formatSummaryLine("Symbol / Product", joinNonEmpty(" / ", quote.Symbol, quote.ProductCode)),
+		formatSummaryLine("Contract", joinNonEmpty(" / ", quote.Contract, quote.QuoteCode)),
+		formatSummaryLine("Current", quoteNumberText(quote.Price)),
+		formatSummaryLine("Change / Rate", joinNonEmpty(" / ",
+			quoteSignedNumberText(quote.Change),
+			quotePercentText(quote.ChangePercent),
+		)),
+		formatSummaryLine("Previous Close", quoteNumberText(quote.PreviousClose)),
 		formatSummaryLine("Open / High / Low", joinNonEmpty(" / ",
-			firstNonEmpty(row, "open_price"),
-			firstNonEmpty(row, "high_price"),
-			firstNonEmpty(row, "low_price"),
+			quoteNumberText(quote.Open),
+			quoteNumberText(quote.High),
+			quoteNumberText(quote.Low),
 		)),
-		formatSummaryLine("Volume", firstNonEmpty(row, "vol")),
-		formatSummaryLine("Exchange / Currency", joinNonEmpty(" / ",
-			firstNonEmpty(row, "exch_cd"),
-			firstNonEmpty(row, "crc_cd"),
-		)),
-		formatSummaryLine("Expiry", firstNonEmpty(row, "expr_date")),
+		formatSummaryLine("Volume", quoteNumberText(quote.Volume)),
+		formatSummaryLine("Exchange / Currency", joinNonEmpty(" / ", quote.Exchange, quote.Currency)),
+		formatSummaryLine("As Of", quote.AsOf),
+		formatSummaryLine("Delay", quote.Delay),
+		formatSummaryLine("Source", quote.SourceURL),
+		formatSummaryLine("CME Page", quote.ReferenceURL),
+		formatSummaryLine("Note", quote.Note),
 	})
 }
 
@@ -1251,6 +1591,32 @@ func printExchangeRateSummary(marketDivCode string, symbol string, resp *auth.RE
 	})
 }
 
+func printShippingIndexSummary(quotes []shippingindex.Quote) {
+	if len(quotes) == 0 {
+		return
+	}
+
+	lines := []string{
+		formatSummaryLine("Source", "StockQ public market summary"),
+	}
+
+	for _, quote := range quotes {
+		lines = append(lines, formatSummaryLine(
+			quote.Symbol,
+			fmt.Sprintf("%s (%s) | %s / %s / %s | local %s",
+				quote.Name,
+				quote.Symbol,
+				humanNumber(strconv.FormatFloat(quote.Price, 'f', -1, 64)),
+				formatSignedFloat(quote.Change),
+				formatPercentPoints(quote.ChangePercent),
+				quote.Local,
+			),
+		))
+	}
+
+	printSummaryBlock("Shipping Index Summary", lines)
+}
+
 func printClientMetricsSummary(metrics auth.HTTPMetricsSnapshot) {
 	lines := []string{
 		formatSummaryLine("Call Count", strconv.Itoa(metrics.CallCount)),
@@ -1269,6 +1635,14 @@ func printClientMetricsSummary(metrics auth.HTTPMetricsSnapshot) {
 	}
 
 	printSummaryBlock("KIClient Metrics", lines)
+}
+
+func configuredCommodityInstrument(name string, ticker string, productCode string, cmeProductID string) commodityfuture.Instrument {
+	instrument := commodityfuture.ResolveInstrument(name, ticker, productCode)
+	if strings.TrimSpace(cmeProductID) != "" {
+		instrument.CMEProductID = strings.TrimSpace(cmeProductID)
+	}
+	return instrument
 }
 
 func printSummaryBlock(title string, lines []string) {
@@ -1630,6 +2004,36 @@ func resolveMonteCarloJSONPath(basePath string, businessDate string, symbol stri
 	return filepath.Join(dir, resolved+ext)
 }
 
+func resolveCompanyAnalysisJSONPath(basePath string, businessDate string, symbol string) string {
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		basePath = ".cache/company_analysis.json"
+	}
+
+	dir := filepath.Dir(basePath)
+	filename := filepath.Base(basePath)
+	ext := filepath.Ext(filename)
+	stem := filename
+	if ext != "" {
+		stem = strings.TrimSuffix(filename, ext)
+	}
+
+	parts := []string{stem}
+	if normalizedDate := normalizeYMD(businessDate); normalizedDate != "" {
+		parts = append(parts, normalizedDate)
+	}
+	symbol = strings.TrimSpace(symbol)
+	if symbol != "" {
+		parts = append(parts, symbol)
+	}
+
+	resolved := strings.Join(parts, ".")
+	if ext == "" {
+		ext = ".json"
+	}
+	return filepath.Join(dir, resolved+ext)
+}
+
 func resolveQuadWitchingSnapshotPath(basePath string, businessDate string, futuresCode string) string {
 	basePath = strings.TrimSpace(basePath)
 	if basePath == "" {
@@ -1672,12 +2076,100 @@ func joinNonEmpty(sep string, parts ...string) string {
 	return strings.Join(filtered, sep)
 }
 
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		items = append(items, part)
+	}
+	return items
+}
+
 func formatFloat(value float64) string {
 	return fmt.Sprintf("%.2f", value)
 }
 
+func formatSignedFloat(value float64) string {
+	if value > 0 {
+		return "+" + formatFloat(value)
+	}
+	return formatFloat(value)
+}
+
+func formatPercentPoints(value float64) string {
+	return fmt.Sprintf("%.2f%%", value)
+}
+
 func formatPercent(value float64) string {
 	return fmt.Sprintf("%.2f%%", value*100)
+}
+
+func formatMoney(currency string, value float64) string {
+	label := strings.TrimSpace(currency)
+	number := humanNumber(strconv.FormatFloat(value, 'f', 2, 64))
+	if label == "" {
+		return number
+	}
+	return label + " " + number
+}
+
+func formatSignedMoney(currency string, value float64) string {
+	if value > 0 {
+		return "+" + formatMoney(currency, value)
+	}
+	return formatMoney(currency, value)
+}
+
+func commodityProviderPathText(path string) string {
+	parts := splitCSV(strings.ReplaceAll(path, "->", ","))
+	if len(parts) == 0 {
+		return ""
+	}
+
+	labels := make([]string, 0, len(parts))
+	for _, part := range parts {
+		switch strings.ToLower(strings.TrimSpace(part)) {
+		case commodityfuture.ProviderCME:
+			labels = append(labels, "CME delayed")
+		case commodityfuture.ProviderYahoo:
+			labels = append(labels, "Yahoo Finance")
+		default:
+			labels = append(labels, part)
+		}
+	}
+	return strings.Join(labels, " -> ")
+}
+
+func quoteNumberText(value *float64) string {
+	if value == nil {
+		return ""
+	}
+	return humanNumber(strconv.FormatFloat(*value, 'f', -1, 64))
+}
+
+func quoteSignedNumberText(value *float64) string {
+	if value == nil {
+		return ""
+	}
+	number := quoteNumberText(value)
+	if number == "" {
+		return ""
+	}
+	if *value > 0 {
+		return "+" + number
+	}
+	return number
+}
+
+func quotePercentText(value *float64) string {
+	if value == nil {
+		return ""
+	}
+	return formatPercentPoints(*value)
 }
 
 func cacheLabel(cacheHit bool) string {

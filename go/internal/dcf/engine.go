@@ -2,6 +2,7 @@ package dcf
 
 import (
 	"fmt"
+	"strings"
 )
 
 type FinancialData struct {
@@ -25,8 +26,10 @@ type MarketData struct {
 }
 
 type Assumptions struct {
-	ForecastYears  int     `json:"forecast_years"`
-	TerminalGrowth float64 `json:"terminal_growth"`
+	ForecastYears    int     `json:"forecast_years"`
+	TerminalGrowth   float64 `json:"terminal_growth"`
+	TargetPriceScale float64 `json:"target_price_scale,omitempty"`
+	TargetPriceUnit  string  `json:"target_price_unit,omitempty"`
 }
 
 type ProjectionModel struct {
@@ -66,7 +69,10 @@ type ValuationResult struct {
 	Assumptions          Assumptions     `json:"assumptions"`
 }
 
-const targetPriceKRWScale = 100_000_000.0
+const (
+	defaultTargetPriceScale = 100_000_000.0
+	defaultTargetPriceUnit  = "KRW/share"
+)
 
 func FCF(fin FinancialData) float64 {
 	return (fin.EBIT * (1 - fin.EffectiveTax)) + fin.DnA - fin.CapEx - fin.ChangeInNWC
@@ -86,6 +92,7 @@ func Value(fin FinancialData, market MarketData, assumptions Assumptions, model 
 		return nil, fmt.Errorf("shares out must be positive")
 	}
 
+	assumptions = normalizeAssumptions(assumptions)
 	model = normalizeProjectionModel(model)
 	wacc := WACC(fin, market)
 	forecast, err := buildForecast(fin, assumptions, model)
@@ -102,6 +109,16 @@ func normalizeProjectionModel(model ProjectionModel) ProjectionModel {
 	model.CapExMargin = clamp(model.CapExMargin, 0, 0.40)
 	model.NWCMargin = clamp(model.NWCMargin, -0.20, 0.20)
 	return model
+}
+
+func normalizeAssumptions(assumptions Assumptions) Assumptions {
+	if assumptions.TargetPriceScale == 0 {
+		assumptions.TargetPriceScale = defaultTargetPriceScale
+	}
+	if strings.TrimSpace(assumptions.TargetPriceUnit) == "" {
+		assumptions.TargetPriceUnit = defaultTargetPriceUnit
+	}
+	return assumptions
 }
 
 func clamp(value float64, lower float64, upper float64) float64 {
