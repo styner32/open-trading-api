@@ -1,0 +1,4 @@
+## 2024-05-18 - [Fix Insecure YAML Deserialization]
+**Vulnerability:** Found arbitrary code execution vulnerability via unsafe use of `yaml.load` across the codebase.
+**Learning:** Legacy Python configurations and integrations frequently adopted `yaml.load` along with `Loader=yaml.FullLoader` to parse configuration files. This functionality, while common, inherently enables malicious code execution if given untrusted files.
+**Prevention:** In this codebase, only `yaml.safe_load()` should be used when loading YAML contents to prevent possible arbitrary code execution, especially for config parsing.
