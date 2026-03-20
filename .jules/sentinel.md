@@ -1,0 +1,4 @@
+## 2026-03-20 - Replace yaml.load with yaml.safe_load
+**Vulnerability:** Multiple instances of `yaml.load` with `FullLoader` were used instead of `yaml.safe_load`. While `FullLoader` is safer than the default unsafe loader, `safe_load` is the most secure option as it prevents instantiation of custom Python objects, mitigating potential insecure deserialization vulnerabilities if a malicious YAML file is loaded.
+**Learning:** Developers might use `FullLoader` when they encounter issues with custom tags, but standard configuration files should only require standard YAML tags. Using `yaml.load` is a common anti-pattern that can lead to remote code execution (RCE).
+**Prevention:** Always use `yaml.safe_load` for parsing YAML files unless there is a specific and well-justified need to instantiate custom Python objects. Enforce this via linting rules or code review.
