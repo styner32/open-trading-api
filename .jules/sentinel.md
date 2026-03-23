@@ -1,0 +1,4 @@
+## 2024-05-24 - [Unsafe YAML Loading in Config Parsing]
+**Vulnerability:** Found pervasive use of `yaml.load(f, Loader=yaml.FullLoader)` across multiple legacy and example authentication scripts (`kis_auth.py`, `kis_api.py`, etc.).
+**Learning:** Even with `yaml.FullLoader`, `yaml.load` can be risky if loading untrusted data, though less so than the default loader. In Python, `yaml.safe_load` is the standard and safest approach for parsing standard configurations. The pattern was likely copy-pasted across multiple `examples_*` and `legacy/*` folders due to lack of a centralized auth module.
+**Prevention:** Always enforce the use of `yaml.safe_load()` in Python scripts when parsing configuration files to prevent potential arbitrary code execution vulnerabilities. Centralizing duplicated config parsing code into a single secure module would reduce surface area.
