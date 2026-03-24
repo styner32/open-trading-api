@@ -1,0 +1,4 @@
+## 2024-05-24 - [Fix insecure YAML deserialization]
+**Vulnerability:** The codebase was widely using `yaml.load(f, Loader=yaml.FullLoader)` or just `yaml.load(f)` to parse YAML configuration files. This is a critical vulnerability that allows arbitrary code execution via object instantiation from un-trusted YAML data.
+**Learning:** `yaml.load` should never be used on any data originating from untrusted sources, and by extension, should be avoided as a best practice in modern Python in favor of `yaml.safe_load`.
+**Prevention:** Always use `yaml.safe_load(f)` which provides safer deserialization that limits instantiation to simple Python objects like dictionaries and lists, eliminating the RCE vector.
