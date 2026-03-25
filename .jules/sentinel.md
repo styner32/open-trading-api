@@ -1,0 +1,4 @@
+## 2024-03-25 - [Insecure YAML Deserialization]
+**Vulnerability:** Found `yaml.load(f, Loader=yaml.FullLoader)` used multiple times across different authentication scripts (`kis_auth.py` files) to read `kis_devlp.yaml` configurations.
+**Learning:** While `Loader=yaml.FullLoader` is safer than the default unauthenticated loader, it can still pose arbitrary code execution risks depending on exact configuration structure. Standard security practices dictate always using `yaml.safe_load(f)` when loading untrusted data or configuration files without arbitrary objects. This application specifically duplicates auth files across examples (`examples_llm`, `examples_user`) and legacy code, which multiplies the attack surface.
+**Prevention:** Always use `yaml.safe_load(f)` for standard YAML configuration parsing instead of `yaml.load(f, Loader=yaml.FullLoader)`. Consolidate authentication scripts into a single importable module instead of duplicating them.
