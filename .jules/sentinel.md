@@ -1,0 +1,4 @@
+## 2025-01-20 - Insecure YAML Deserialization
+**Vulnerability:** Insecure deserialization using `yaml.load(f, Loader=yaml.FullLoader)` in multiple scripts, including `kis_auth.py` and data fetching scripts.
+**Learning:** `yaml.load` even with `yaml.FullLoader` is vulnerable to arbitrary code execution if the YAML file is modified or replaced by an attacker. It existed because `yaml.FullLoader` was likely assumed to be safe, but it still allows instantiation of arbitrary Python objects.
+**Prevention:** Always use `yaml.safe_load(f)` when parsing YAML files from untrusted or potentially modifiable sources. `yaml.safe_load` restricts parsing to standard YAML tags, preventing the execution of arbitrary Python code.
