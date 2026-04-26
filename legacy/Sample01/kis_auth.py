@@ -45,7 +45,7 @@ if os.path.exists(token_tmp) == False:
 # 앱키, 앱시크리트, 토큰, 계좌번호 등 저장관리, 자신만의 경로와 파일명으로 설정하시기 바랍니다.
 # pip install PyYAML (패키지설치)
 with open(config_root + 'kis_devlp.yaml', encoding='UTF-8') as f:
-    _cfg = yaml.load(f, Loader=yaml.FullLoader)
+    _cfg = yaml.safe_load(f)  # SEC: Prevent insecure deserialization
 
 _TRENV = tuple()
 _last_auth_time = datetime.now()
@@ -76,7 +76,7 @@ def read_token():
     try:
         # 토큰이 저장된 파일 읽기
         with open(token_tmp, encoding='UTF-8') as f:
-            tkg_tmp = yaml.load(f, Loader=yaml.FullLoader)
+            tkg_tmp = yaml.safe_load(f)  # SEC: Prevent insecure deserialization
 
         # 토큰 만료 일,시간
         exp_dt = datetime.strftime(tkg_tmp['valid-date'], '%Y-%m-%d %H:%M:%S')
