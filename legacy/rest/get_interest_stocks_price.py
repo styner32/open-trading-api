@@ -11,7 +11,8 @@ import time
 
 # (1) 개인정보 파일 가져오기
 with open('config.yaml', encoding='UTF-8') as f:
-    _cfg = yaml.load(f, Loader=yaml.FullLoader)
+    # SEC: Use safe_load to prevent insecure deserialization of YAML
+    _cfg = yaml.safe_load(f)
 APP_KEY = _cfg['APP_KEY']
 APP_SECRET = _cfg['APP_SECRET']
 ACCESS_TOKEN = ""
