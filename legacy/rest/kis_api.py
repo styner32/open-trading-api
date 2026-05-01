@@ -16,7 +16,8 @@ from collections import namedtuple
 from datetime import datetime
 
 with open(r'kisdev_vi.yaml', encoding='UTF-8') as f:
-    _cfg = yaml.load(f, Loader=yaml.FullLoader)
+    # SEC: Use safe_load to prevent insecure deserialization
+    _cfg = yaml.safe_load(f)
 
 _TRENV = tuple()
 _last_auth_time = datetime.now()
