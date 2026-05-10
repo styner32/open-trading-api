@@ -1,0 +1,4 @@
+## 2025-02-28 - [Insecure YAML Deserialization]
+**Vulnerability:** Found multiple instances where `yaml.load(f, Loader=yaml.FullLoader)` was used to parse YAML configuration files. This pattern is insecure and can allow arbitrary code execution if an attacker can manipulate the YAML file being parsed.
+**Learning:** `yaml.load` (even with `yaml.FullLoader`) shouldn't be used for parsing user-supplied or untrusted YAML data in this codebase.
+**Prevention:** Replaced `yaml.load` with `yaml.safe_load`, which parses a safe subset of YAML and prevents object instantiation and code execution. Always use `yaml.safe_load` when parsing YAML configurations.
