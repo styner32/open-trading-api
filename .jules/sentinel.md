@@ -1,0 +1,4 @@
+## 2025-02-14 - Fix insecure YAML deserialization
+**Vulnerability:** Codebase used `yaml.load(f, Loader=yaml.FullLoader)` which could lead to arbitrary code execution if malicious YAML data is loaded. Although `yaml.FullLoader` is safer than the default, it still supports full Python object deserialization and is discouraged in modern PyYAML.
+**Learning:** Configurations in KIS examples and legacy files parse YAML data to retrieve tokens and settings. `yaml.safe_load()` correctly handles these standard data structures (including ISO timestamps into datetime objects) without the inherent risks of arbitrary object instantiation.
+**Prevention:** Always use `yaml.safe_load()` instead of `yaml.load()` when reading configuration files or any potentially untrusted YAML data to ensure only basic standard Python objects are created.
