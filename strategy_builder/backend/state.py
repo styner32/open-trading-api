@@ -162,7 +162,7 @@ class TradingState:
         )
         try:
             with open(config_path, encoding="UTF-8") as f:
-                new_cfg = _yaml.load(f, Loader=_yaml.FullLoader)
+                new_cfg = _yaml.safe_load(f)
             ka._cfg.clear()
             ka._cfg.update(new_cfg)
         except Exception as e:

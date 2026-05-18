@@ -1,0 +1,4 @@
+## 2024-05-24 - [Insecure YAML Deserialization]
+**Vulnerability:** The application was using `yaml.load(f, Loader=yaml.FullLoader)` instead of `yaml.safe_load(f)` to parse configuration files like `kis_devlp.yaml` and `token.tmp`.
+**Learning:** `yaml.load` is vulnerable to arbitrary code execution if the YAML file contains specific tags (like `!!python/object/apply:os.system`). Even though `FullLoader` mitigates some risks compared to `Loader=UnsafeLoader` (the default before PyYAML 5.1), it still allows the instantiation of arbitrary Python objects, which can be exploited by an attacker who controls the YAML file.
+**Prevention:** Always use `yaml.safe_load` when parsing YAML files from untrusted or external sources to prevent arbitrary code execution and object instantiation vulnerabilities. `safe_load` only supports standard YAML tags and cannot instantiate arbitrary Python classes.
