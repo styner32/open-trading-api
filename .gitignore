@@ -96,6 +96,7 @@ env.bak/
 venv.bak/
 go/.auth_token.json
 go/.cache/
+go/bin/
 
 # ===== uv =====
 .python-version
