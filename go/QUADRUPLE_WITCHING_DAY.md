@@ -383,31 +383,27 @@ WebSocket: 최대 40개 종목 동시 구독
 
 ## 9. 프로젝트 구조 (권장)
 
-```
-expiry-agent/
-├── config.yaml              # API 키, 계좌정보 (.gitignore 필수)
-├── agent.py                 # 메인 에이전트 (스케줄러)
-├── auth.py                  # OAuth 토큰 발급/갱신
-├── api/
-│   ├── program_trade.py     # 프로그램매매 현황 조회
-│   ├── investor.py          # 투자자별 매매동향
-│   ├── futures_quote.py     # 선물 시세, 베이시스
-│   ├── stock_quote.py       # 현물 지수, 호가/예상체결
-│   └── foreign_trade.py     # 외국인 매매 가집계
-├── ws/
-│   ├── client.py            # WebSocket 연결 관리
-│   └── handlers.py          # 실시간 데이터 핸들러
-├── analysis/
-│   ├── basis.py             # 베이시스 분석
-│   ├── program_alert.py     # 프로그램매매 알림 로직
-│   ├── foreign_stance.py    # 외국인 포지션 분석
-│   └── auction_monitor.py   # 동시호가 왜곡 감지
-├── report/
-│   ├── snapshot.py          # 시간별 스냅샷 리포트
-│   └── final_report.py      # 장 마감 종합 리포트
-├── utils/
-│   ├── master_code.py       # 선물/옵션 마스터파일 파싱
-│   └── notify.py            # 알림 (Slack, Telegram 등)
+```text
+go/
+├── cmd/
+│   ├── main.go                    # bootstrap (.env 로드 + runApp 호출)
+│   ├── app.go                     # quad witching 포함 전체 실행 orchestration
+│   ├── config.go                  # env/default 로딩
+│   ├── render_quadwitching.go     # quad witching 요약 출력
+│   └── path_helpers.go            # business-date/path helper
+├── internal/
+│   ├── domesticstock/
+│   │   ├── market_snapshot.go     # 현물 지수/장 상태/RSI
+│   │   ├── quotation_analysis.go  # 투자자/외인/동시호가
+│   │   ├── kospi_master_cache.go  # dated KOSPI master + JSON sidecar
+│   │   └── pbr.go                 # KOSPI weighted PBR 계산
+│   ├── domesticfutureoption/
+│   │   ├── quotes.go              # 선물 시세/전광판/예상체결
+│   │   ├── contract_resolution.go # 근월물 KOSPI200 선물 결정
+│   │   └── master_cache.go        # dated index futures master + JSON sidecar
+│   └── quadwitching/
+│       ├── schedule.go            # 실행 윈도우 계산
+│       └── export.go              # snapshot JSON export
 └── README.md
 ```
 
