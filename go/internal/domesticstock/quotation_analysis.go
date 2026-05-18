@@ -10,9 +10,11 @@ import (
 
 const (
 	inquireInvestorPath         = "/uapi/domestic-stock/v1/quotations/inquire-investor"
+	investorDailyByMarketPath   = "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
 	foreignInstitutionTotalPath = "/uapi/domestic-stock/v1/quotations/foreign-institution-total"
 	askingPriceExpCCNPath       = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
 	inquireInvestorTRID         = "FHKST01010900"
+	investorDailyByMarketTRID   = "FHPTJ04040000"
 	foreignInstitutionTotalTRID = "FHPTJ04400000"
 	askingPriceExpCCNTRID       = "FHKST01010200"
 	defaultForeignMarketDivCode = "V"
@@ -38,6 +40,23 @@ func (s *Service) InquireInvestor(ctx context.Context, marketDivCode string, inp
 		"FID_INPUT_ISCD":         inputISCD,
 	}
 	return s.client.Get(ctx, inquireInvestorPath, inquireInvestorTRID, "", params)
+}
+
+func (s *Service) InquireInvestorDailyByMarket(ctx context.Context, yyyymmdd string) (*auth.RESTResponse, error) {
+	yyyymmdd = strings.TrimSpace(yyyymmdd)
+	if yyyymmdd == "" {
+		return nil, errors.New("yyyymmdd is required")
+	}
+
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": "U",
+		"FID_INPUT_ISCD":         "0001",
+		"FID_INPUT_DATE_1":       yyyymmdd,
+		"FID_INPUT_ISCD_1":       "KSP",
+		"FID_INPUT_DATE_2":       yyyymmdd,
+		"FID_INPUT_ISCD_2":       "0001",
+	}
+	return s.client.Get(ctx, investorDailyByMarketPath, investorDailyByMarketTRID, "", params)
 }
 
 func (s *Service) ForeignInstitutionTotal(
