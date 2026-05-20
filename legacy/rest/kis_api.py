@@ -5,6 +5,7 @@ Created on Mon Apr 18 11:23:04 2022
 @author: KIS Developers
 """
 
+import os
 import time, copy
 import yaml
 import requests
@@ -21,7 +22,7 @@ with open(r'kisdev_vi.yaml', encoding='UTF-8') as f:
 _TRENV = tuple()
 _last_auth_time = datetime.now()
 _autoReAuth = False
-_DEBUG = True
+_DEBUG = os.environ.get('KIS_DEBUG', 'False').lower() in ('true', '1', 't') # SEC: Don't expose sensitive credentials by default
 _isPaper = True
 
 _base_headers = {
