@@ -9,6 +9,7 @@ import time, copy
 import yaml
 import requests
 import json
+import os
 
 import pandas as pd
 
@@ -21,7 +22,7 @@ with open(r'kisdev_vi.yaml', encoding='UTF-8') as f:
 _TRENV = tuple()
 _last_auth_time = datetime.now()
 _autoReAuth = False
-_DEBUG = True
+_DEBUG = os.environ.get('KIS_DEBUG', 'False').lower() in ('true', '1', 't')
 _isPaper = True
 
 _base_headers = {
@@ -208,7 +209,11 @@ class APIResp:
     def printAll(self):
         print("<Header>")
         for x in self.getHeader()._fields:
-            print(f'\t-{x}: {getattr(self.getHeader(), x)}')
+            # SEC: Redact sensitive information from response headers
+            val = getattr(self.getHeader(), x)
+            if x.lower() in ('authorization', 'appkey', 'appsecret') and val:
+                val = '*' * len(str(val))
+            print(f'\t-{x}: {val}')
         print("<Body>")
         for x in self.getBody()._fields:        
             print(f'\t-{x}: {getattr(self.getBody(), x)}')
@@ -245,7 +250,12 @@ def _url_fetch(api_url, ptr_id, params, appendHeaders=None, postFlag=False, hash
     if(_DEBUG):
         print("< Sending Info >")
         print(f"URL: {url}, TR: {tr_id}")
-        print(f"<header>\n{headers}")
+        # SEC: Redact sensitive information from request headers
+        debug_headers = headers.copy()
+        for key in ('authorization', 'appkey', 'appsecret'):
+            if key in debug_headers and debug_headers[key]:
+                debug_headers[key] = '*' * len(str(debug_headers[key]))
+        print(f"<header>\n{debug_headers}")
         print(f"<body>\n{params}")
         
     if (postFlag):

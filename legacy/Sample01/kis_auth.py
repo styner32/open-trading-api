@@ -50,7 +50,7 @@ with open(config_root + 'kis_devlp.yaml', encoding='UTF-8') as f:
 _TRENV = tuple()
 _last_auth_time = datetime.now()
 _autoReAuth = False
-_DEBUG = False
+_DEBUG = os.environ.get('KIS_DEBUG', 'False').lower() in ('true', '1', 't')
 _isPaper = False
 
 # 기본 헤더값 정의
