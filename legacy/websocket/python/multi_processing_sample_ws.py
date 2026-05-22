@@ -449,7 +449,8 @@ async def websocket_receiver(url, approval_key, stock_codes, data_queues, custty
                                     if trid in ("H0STCNI0", "H0STCNI9"):
                                         aes_key = jsonObject["body"]["output"]["key"]
                                         aes_iv = jsonObject["body"]["output"]["iv"]
-                                        print(f"[WebSocket Main] AES KEY 저장: {aes_key[:20]}...")
+                                        # SEC: Hide keys
+                                        # print(f"[WebSocket Main] AES KEY 저장: {aes_key[:20]}...")
                         
                         except json.JSONDecodeError as e:
                             print(f"[WebSocket Main] JSON error: {e}")
