@@ -143,7 +143,8 @@ async def connect():
         url = 'ws://ops.koreainvestment.com:21000' # 실전투자계좌
 
         g_approval_key = get_approval(g_appkey, g_appsecret)
-        print("approval_key [%s]" % (g_approval_key))
+        # SEC: Hide approval_key
+        # print("approval_key [%s]" % (g_approval_key))
 
         async with websockets.connect(url, ping_interval=None) as websocket:
 
@@ -240,7 +241,8 @@ async def connect():
                             if trid == "H0STCNI0" or trid == "H0STCNI9":
                                 aes_key = jsonObject["body"]["output"]["key"]
                                 aes_iv = jsonObject["body"]["output"]["iv"]
-                                print("### TRID [%s] KEY[%s] IV[%s]" % (trid, aes_key, aes_iv))
+                                # SEC: Hide AES Key and IV
+                                # print("### TRID [%s] KEY[%s] IV[%s]" % (trid, aes_key, aes_iv))
 
                     elif trid == "PINGPONG":
                         print("### RECV [PINGPONG] [%s]" % (data))
