@@ -449,7 +449,7 @@ async def websocket_receiver(url, approval_key, stock_codes, data_queues, custty
                                     if trid in ("H0STCNI0", "H0STCNI9"):
                                         aes_key = jsonObject["body"]["output"]["key"]
                                         aes_iv = jsonObject["body"]["output"]["iv"]
-                                        print(f"[WebSocket Main] AES KEY 저장: {aes_key[:20]}...")
+                                        # print(f"[WebSocket Main] AES KEY 저장: {aes_key[:20]}...") # SEC: Hide aes_key
                         
                         except json.JSONDecodeError as e:
                             print(f"[WebSocket Main] JSON error: {e}")
@@ -500,7 +500,7 @@ def main():
         # 1. Approval key 발급
         print("=== Approval Key 발급 중 ===")
         approval_key = get_approval(g_appkey, g_appsecret)
-        print(f"Approval Key: {approval_key}\n")
+        # print(f"Approval Key: {approval_key}\n") # SEC: Hide approval_key
         
         # 2. 각 종목별 데이터 큐 생성 (Manager 사용)
         manager = Manager()

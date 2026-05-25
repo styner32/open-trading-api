@@ -1,0 +1,4 @@
+## 2024-05-25 - [CRITICAL] AES Key Exposure via Raw API Response Logging
+**Vulnerability:** Legacy WebSocket scripts printed raw `approval_key`, `aes_key`, and `aes_iv` tokens to stdout during the WebSocket handshake and TR ID response parsing.
+**Learning:** The KIS Open API WebSocket endpoints embed highly sensitive decryption keys (`key` and `iv`) directly in the JSON response body (`jsonObject["body"]["output"]`) for specific transaction IDs (e.g., `H0STCNI0`, `HDFFF2C0`). Any generic or debug printing of these responses blindly leaks cryptographic secrets used to secure execution reports.
+**Prevention:** Never print or log raw API responses for authentication or execution data endpoints. Explicitly mask or remove logging for keys like `approval_key`, `aes_key`, and `aes_iv` when setting up WebSocket connections.
