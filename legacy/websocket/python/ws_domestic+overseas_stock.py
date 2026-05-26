@@ -245,7 +245,8 @@ async def connect():
         # access_token = get_access_token(appkey, appsecret)
         
         g_approval_key = get_approval(g_appkey, g_appsecret)
-        print("approval_key [%s]" % (g_approval_key))
+        # SEC: Hide approval_key
+        print("approval_key [***]")
 
         # url = 'ws://ops.koreainvestment.com:31000' # 모의투자계좌
         url = 'ws://ops.koreainvestment.com:21000' # 실전투자계좌
@@ -333,12 +334,14 @@ async def connect():
                             if trid == "H0STCNI0" or trid == "H0STCNI9":
                                 aes_key = jsonObject["body"]["output"]["key"]
                                 aes_iv = jsonObject["body"]["output"]["iv"]
-                                print("### TRID [%s] KEY[%s] IV[%s]" % (trid, aes_key, aes_iv))
+                                # SEC: Masked AES key and IV to prevent exposure
+                                print("### TRID [%s] KEY[***] IV[***]" % (trid))
 
                             elif trid == "H0GSCNI0" or trid == "H0GSCNI9":
                                 aes_key = jsonObject["body"]["output"]["key"]
                                 aes_iv = jsonObject["body"]["output"]["iv"]
-                                print("### TRID [%s] KEY[%s] IV[%s]" % (trid, aes_key, aes_iv))
+                                # SEC: Masked AES key and IV to prevent exposure
+                                print("### TRID [%s] KEY[***] IV[***]" % (trid))
 
                     elif trid == "PINGPONG":
                         print("### RECV [PINGPONG] [%s]" % (data))

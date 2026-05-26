@@ -21,7 +21,7 @@ with open(r'kisdev_vi.yaml', encoding='UTF-8') as f:
 _TRENV = tuple()
 _last_auth_time = datetime.now()
 _autoReAuth = False
-_DEBUG = True
+_DEBUG = False # SEC: Disabled debug by default to prevent leaking credentials in requests
 _isPaper = True
 
 _base_headers = {

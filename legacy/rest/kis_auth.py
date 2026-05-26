@@ -51,7 +51,8 @@ _base_headers = {
 # 토큰 발급 받아 저장 (토큰값, 토큰 유효시간,1일, 6시간 이내 발급신청시는 기존 토큰값과 동일, 발급시 알림톡 발송)
 def save_token(my_token, my_expired):
     valid_date = datetime.strptime(my_expired, '%Y-%m-%d %H:%M:%S')
-    print('Save token date: ', valid_date)
+    # SEC: Masked token saving info
+    # print('Save token date: ', valid_date)
     with open(token_tmp, 'w', encoding='utf-8') as f:
         f.write(f'token: {my_token}\n')
         f.write(f'valid-date: {valid_date}\n')
@@ -165,7 +166,8 @@ def auth(svr='prod', product='01', url=None):
 
     # 기존 발급된 토큰이 있는지 확인
     saved_token = read_token()  # 기존 발급 토큰 확인
-    print("saved_token: ", saved_token)
+    # SEC: Masked saved_token to prevent exposure
+    # print("saved_token: ", saved_token)
     if saved_token is None:  # 기존 발급 토큰 확인이 안되면 발급처리
         url = f'{_cfg[svr]}/oauth2/tokenP'
         res = requests.post(url, data=json.dumps(p), headers=_getBaseHeader())  # 토큰 발급
@@ -205,4 +207,5 @@ def reAuth(svr='prod', product='01'):
 auth()
 # 접근토큰 조회
 gettoken = read_token()
-print(gettoken)
+# SEC: Masked gettoken to prevent exposure
+# print(gettoken)

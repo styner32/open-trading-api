@@ -335,7 +335,8 @@ def stocksigningnotice_futsoptn(data, key, iv):
     
     # AES256 처리 단계
     aes_dec_str = aes_cbc_base64_dec(key, iv, data)
-    print(aes_dec_str)
+    # SEC: Masked decrypted string to prevent exposure
+    # print(aes_dec_str)
     pValue = aes_dec_str.split('^')
     print(pValue)
 
@@ -395,7 +396,8 @@ async def connect():
         g_appsecret = "앱 시크릿키를 입력하세요"
 
         g_approval_key = get_approval(g_appkey, g_appsecret)
-        print("approval_key [%s]" % (g_approval_key))
+        # SEC: Hide approval_key
+        print("approval_key [***]")
 
         # url = 'ws://ops.koreainvestment.com:31000' # 모의투자계좌
         url = 'ws://ops.koreainvestment.com:21000' # 실전투자계좌
@@ -574,7 +576,8 @@ async def connect():
                             if trid == "H0IFCNI0" or trid == "H0MFCNI0" or trid == "H0EUCNI0": # 지수/상품/주식 선물옵션 & 야간선물옵션
                                 aes_key = jsonObject["body"]["output"]["key"]
                                 aes_iv = jsonObject["body"]["output"]["iv"]
-                                print("### TRID [%s] KEY[%s] IV[%s]" % (trid, aes_key, aes_iv))
+                                # SEC: Masked AES key and IV to prevent exposure
+                                print("### TRID [%s] KEY[***] IV[***]" % (trid))
 
                     elif trid == "PINGPONG":
                         print("### RECV [PINGPONG] [%s]" % (data))
