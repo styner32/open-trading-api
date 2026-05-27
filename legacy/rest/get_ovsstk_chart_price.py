@@ -24,7 +24,8 @@ CANO = _cfg['CANO']
 ACNT_PRDT_CD = _cfg['ACNT_PRDT_CD']
 URL_BASE = _cfg['URL_BASE']
 HTS_ID = _cfg['HTS_ID']
-print(APP_KEY, APP_SECRET, ACCESS_TOKEN, HTS_ID)
+# SEC: Hide sensitive credentials
+# print(APP_KEY, APP_SECRET, ACCESS_TOKEN, HTS_ID)
 
 # (2) 함수 정의
 ## 1. 접근 토큰 발급

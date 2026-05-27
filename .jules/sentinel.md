@@ -1,0 +1,4 @@
+## 2025-02-14 - Exposing Sensitive Credentials in Console Output
+**Vulnerability:** Legacy API and WebSocket scripts printed multiple sensitive credentials (`APP_SECRET`, `aes_key`, `aes_iv`, `approval_key`) and raw decrypted traffic to the console via `print()` statements.
+**Learning:** Hardcoded `print()` statements added for debugging purposes in legacy example codes pose a significant risk when deployed as users may run the code in an environment where stdout/stderr is logged or captured, thereby permanently exposing API credentials and raw AES decryption keys.
+**Prevention:** Avoid explicitly logging sensitive decryption materials and authentication secrets. For debugging, use controlled logging mechanisms, and explicitly redact tokens/keys by replacing them with `***` masks. Never commit code that prints secrets in clear text, even in "example" directories.
