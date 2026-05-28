@@ -208,7 +208,11 @@ class APIResp:
     def printAll(self):
         print("<Header>")
         for x in self.getHeader()._fields:
-            print(f'\t-{x}: {getattr(self.getHeader(), x)}')
+            # SEC: Mask sensitive credentials in debug logs
+            val = getattr(self.getHeader(), x)
+            if x.lower() in ('authorization', 'appkey', 'appsecret'):
+                val = '***MASKED***'
+            print(f'\t-{x}: {val}')
         print("<Body>")
         for x in self.getBody()._fields:        
             print(f'\t-{x}: {getattr(self.getBody(), x)}')
@@ -245,7 +249,12 @@ def _url_fetch(api_url, ptr_id, params, appendHeaders=None, postFlag=False, hash
     if(_DEBUG):
         print("< Sending Info >")
         print(f"URL: {url}, TR: {tr_id}")
-        print(f"<header>\n{headers}")
+        # SEC: Mask sensitive credentials in debug logs
+        masked_headers = dict(headers)
+        for key in masked_headers.keys():
+            if key.lower() in ('authorization', 'appkey', 'appsecret'):
+                masked_headers[key] = '***MASKED***'
+        print(f"<header>\n{masked_headers}")
         print(f"<body>\n{params}")
         
     if (postFlag):
