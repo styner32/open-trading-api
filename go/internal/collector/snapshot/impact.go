@@ -137,8 +137,14 @@ func (s *ImpactSection) collectBasis(ctx context.Context, stock DomesticStock) {
 		return
 	}
 	basis := *s.FuturesPrice - indexPrice
+	basisPct := basis / indexPrice * 100
+	// sanity check: 베이시스율이 ±10% 초과면 필드명 불일치로 판단
+	if basisPct < -10 || basisPct > 10 {
+		s.BasisReason = fmt.Sprintf("basis out of range (%.1f%%, futures=%.2f index=%.2f) — field mismatch?", basisPct, *s.FuturesPrice, indexPrice)
+		return
+	}
 	s.BasisPoints = ptr(basis)
-	s.BasisPercent = ptr(basis / indexPrice * 100)
+	s.BasisPercent = ptr(basisPct)
 }
 
 func normalizeSidecar(value string) string {

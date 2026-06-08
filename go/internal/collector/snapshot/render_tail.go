@@ -7,7 +7,7 @@ import (
 
 
 func renderCumulative(b *strings.Builder, s *Snapshot) {
-	b.WriteString("## 5. 누적 지표\n")
+	b.WriteString("## 5. 누적 지표 [수동 입력]\n")
 	c := s.Cumulative
 	month := int(s.Timestamp.Month())
 	if c == nil {

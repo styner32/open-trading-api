@@ -121,3 +121,28 @@ func (s *Service) InquireAskingPriceExpCCN(ctx context.Context, marketDivCode st
 	}
 	return s.client.Get(ctx, askingPriceExpCCNPath, askingPriceExpCCNTRID, "", params)
 }
+
+func (s *Service) InvestorProgramTradeToday(ctx context.Context, marketDiv string) (*auth.RESTResponse, error) {
+	marketDiv = strings.TrimSpace(marketDiv)
+	if marketDiv == "" {
+		return nil, errors.New("marketDiv is required (1: KOSPI, 4: KOSDAQ)")
+	}
+	params := map[string]string{
+		"MRKT_DIV_CLS_CODE": marketDiv,
+		"EXCH_DIV_CLS_CODE": "J",
+	}
+	return s.client.Get(ctx, investorProgramTradeTodayPath, investorProgramTradeTodayTRID, "", params)
+}
+
+func (s *Service) InquireInvestorTimeByMarket(ctx context.Context, marketDiv string, indexDiv string) (*auth.RESTResponse, error) {
+	marketDiv = strings.TrimSpace(marketDiv)
+	indexDiv = strings.TrimSpace(indexDiv)
+	if marketDiv == "" || indexDiv == "" {
+		return nil, errors.New("marketDiv and indexDiv are required")
+	}
+	params := map[string]string{
+		"FID_INPUT_ISCD":   marketDiv,
+		"FID_INPUT_ISCD_2": indexDiv,
+	}
+	return s.client.Get(ctx, investorTimeByMarketPath, investorTimeByMarketTRID, "", params)
+}

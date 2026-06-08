@@ -35,6 +35,18 @@ func (s *Service) InquireIndexPrice(ctx context.Context, indexCode string) (*aut
 	return s.client.Get(ctx, inquireIndexPricePath, inquireIndexPriceTRID, "", params)
 }
 
+// InquireVKOSPIPrice는 VKOSPI 전용 조회입니다.
+// idxcode.mst 구조: idx_div="0", idx_code="0503"
+// 하지만 FHPUP02100000 TRID는 FID_COND_MRKT_DIV_CODE="U"만 허용.
+// 실제 VKOSPI API 코드는 VKOSPI_INDEX_CODE 환경변수로 직접 지정 가능.
+func (s *Service) InquireVKOSPIPrice(ctx context.Context, indexCode string) (*auth.RESTResponse, error) {
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": "U",
+		"FID_INPUT_ISCD":         strings.TrimSpace(indexCode),
+	}
+	return s.client.Get(ctx, inquireIndexPricePath, inquireIndexPriceTRID, "", params)
+}
+
 func (s *Service) CompProgramTradeToday(ctx context.Context, marketClassCode string) (*auth.RESTResponse, error) {
 	marketClassCode = strings.TrimSpace(marketClassCode)
 	if marketClassCode == "" {
@@ -77,6 +89,45 @@ func (s *Service) MarketFunds(ctx context.Context, yyyymmdd string) (*auth.RESTR
 	return s.client.Get(ctx, marketFundsPath, marketFundsTRID, "", params)
 }
 
+// InquireCreditBalanceRanking fetches credit balance ranking (top stocks).
+// TR: FHKST17010000 (국내주식 신용잔고 상위 [국내주식-109])
+// marketCode: "0"=전체, "1"=KOSPI, "2"=KOSDAQ
+func (s *Service) InquireCreditBalanceRanking(ctx context.Context, marketCode string) (*auth.RESTResponse, error) {
+	// FID_INPUT_ISCD: "0000"=전체, "0001"=거래소, "1001"=코스닥, "2001"=코스피200
+	inputISCD := "0000"
+	if marketCode == "1" {
+		inputISCD = "0001"
+	} else if marketCode == "2" {
+		inputISCD = "1001"
+	}
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": "J",
+		"FID_COND_SCR_DIV_CODE":  "11701",
+		"FID_INPUT_ISCD":         inputISCD,
+		"FID_RANK_SORT_CLS_CODE": "0",
+		"FID_OPTION":             "2",
+	}
+	return s.client.Get(ctx, creditBalancePath, creditBalanceTRID, "", params)
+}
+
+// InquireDailyCreditBalance fetches per-stock daily credit balance history.
+// TR: FHKST130400C0 (국내주식 신용잔고 일별추이 [국내주식-110])
+func (s *Service) InquireDailyCreditBalance(ctx context.Context, symbol string, date string) (*auth.RESTResponse, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, errors.New("symbol is required")
+	}
+	if date == "" {
+		date = "99991231"
+	}
+	params := map[string]string{
+		"FID_COND_MRKT_DIV_CODE": "J",
+		"FID_COND_SCR_DIV_CODE":  "13040",
+		"FID_INPUT_ISCD":         symbol,
+		"FID_INPUT_DATE_1":       date,
+	}
+	return s.client.Get(ctx, dailyCreditBalancePath, dailyCreditBalanceTRID, "", params)
+}
 func (s *Service) InquireDailyItemChartPrice(
 	ctx context.Context,
 	symbol string,

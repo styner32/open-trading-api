@@ -7,15 +7,23 @@ import (
 	"github.com/kis-open-api/go/internal/auth"
 	"github.com/kis-open-api/go/internal/domesticfutureoption"
 	"github.com/kis-open-api/go/internal/domesticstock"
+	"github.com/kis-open-api/go/internal/external/naver"
 	"github.com/kis-open-api/go/internal/external/yahoo"
 )
 
 type DomesticStock interface {
 	InquireIndexDailyPrice(context.Context, string, string) ([]map[string]any, error)
 	InquireIndexPrice(context.Context, string) (*auth.RESTResponse, error)
+	InquireVKOSPIPrice(context.Context, string) (*auth.RESTResponse, error)
+	InquireVKOSPIDailyPrice(context.Context, string, string) ([]map[string]any, error)
 	InquireInvestorDailyByMarket(context.Context, string) (*auth.RESTResponse, error)
 	InquirePrice(context.Context, string) (*auth.RESTResponse, error)
 	KOSPIMarketCapSummary(context.Context, string) (*domesticstock.KOSPIMarketCapSummary, error)
+	ResolveVKOSPICode(context.Context, []string) (string, error)
+	MarketFunds(context.Context, string) (*auth.RESTResponse, error)
+	CompProgramTradeToday(context.Context, string) (*auth.RESTResponse, error)
+	InvestorProgramTradeToday(context.Context, string) (*auth.RESTResponse, error)
+	InquireInvestorTimeByMarket(context.Context, string, string) (*auth.RESTResponse, error)
 }
 
 type DomesticFuture interface {
@@ -25,12 +33,22 @@ type DomesticFuture interface {
 
 type YahooQuotes interface {
 	GetQuotes(context.Context, []string) (map[string]yahoo.Quote, error)
+	GetChartHistory(context.Context, string, string, string) ([]yahoo.DailyClose, error)
+}
+
+// NaverFinance provides VKOSPI and domestic index data from Naver Finance.
+// TODO: unofficial API — may break; consider KRX official data as long-term alternative.
+type NaverFinance interface {
+	GetIndexQuote(context.Context, string) (*naver.IndexQuote, error)
+	GetIndexDailyHistory(context.Context, string, int) ([]naver.DailyClose, error)
 }
 
 type Deps struct {
 	DomesticStock  DomesticStock
 	DomesticFuture DomesticFuture
 	Yahoo          YahooQuotes
+	Naver          NaverFinance
+	KOFIA          KOFIAClient
 }
 
 type Options struct {
@@ -45,13 +63,35 @@ type Options struct {
 	USDKRWMonthStart               *float64
 }
 
+type LateSessionSection struct {
+	BusinessDate                  string  `json:"business_date"`
+	BasisPoint                    float64 `json:"basis_point"`
+	BasisRate                     float64 `json:"basis_rate"`
+	FuturesPrice                  float64 `json:"futures_price"`
+	SpotPrice                     float64 `json:"spot_price"`
+	KOSPINetNonArbitrageForeign   float64 `json:"kospi_net_non_arbitrage_foreign"`
+	KOSPINetNonArbitrageOrgan     float64 `json:"kospi_net_non_arbitrage_organ"`
+	KOSPINetNonArbitrageTotal     float64 `json:"kospi_net_non_arbitrage_total"`
+	LateProgramNetEok             float64 `json:"late_program_net_eok"`
+	CloseSessionProgramNetEok     float64 `json:"close_session_program_net_eok"`
+	CloseSessionForeignNetEok     float64 `json:"close_session_foreign_net_eok"`
+	CloseSessionOrganNetEok       float64 `json:"close_session_organ_net_eok"`
+	CapitulationEvent             bool    `json:"capitulation_event"`
+	CapitulationScore             float64 `json:"capitulation_score"`
+}
+
 type Snapshot struct {
-	Timestamp  time.Time
-	Price      *PriceSection
-	Flow       *FlowSection
-	Impact     *ImpactSection
-	Global     *GlobalSection
-	Cumulative *CumulativeSection
-	Macro      *MacroSection
-	Errors     map[string]error
+	Timestamp     time.Time
+	Price         *PriceSection
+	Flow          *FlowSection
+	Impact        *ImpactSection
+	Global        *GlobalSection
+	Cumulative    *CumulativeSection
+	Macro         *MacroSection
+	Volatility    *VolatilitySection
+	Credit        *CreditSection
+	Regime        *RegimeSection
+	Concentration *ConcentrationSection
+	LateSession   *LateSessionSection
+	Errors        map[string]error
 }

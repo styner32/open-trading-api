@@ -47,13 +47,10 @@ func selectNearMonthKOSPI200Future(records []MasterRecord) (MasterRecord, error)
 		if record.ShortCode == "" {
 			continue
 		}
-		if strings.TrimSpace(record.InfoType) != "1" {
-			continue
+		underlying := strings.TrimSpace(record.UnderlyingShortCode)
+		if strings.TrimSpace(record.InfoType) == "1" && (underlying == "2001" || underlying == "201") {
+			candidates = append(candidates, record)
 		}
-		if !strings.HasPrefix(record.ShortCode, "101") && !strings.Contains(strings.ToUpper(record.UnderlyingName), "KOSPI") {
-			continue
-		}
-		candidates = append(candidates, record)
 	}
 
 	if len(candidates) == 0 {

@@ -23,40 +23,48 @@ import (
 )
 
 const (
-	marketTimePath               = "/uapi/domestic-stock/v1/quotations/market-time"
-	inquirePricePath             = "/uapi/domestic-stock/v1/quotations/inquire-price"
-	inquireIndexPricePath        = "/uapi/domestic-stock/v1/quotations/inquire-index-price"
-	programTradeTodayPath        = "/uapi/domestic-stock/v1/quotations/comp-program-trade-today"
-	viStatusPath                 = "/uapi/domestic-stock/v1/quotations/inquire-vi-status"
-	marketFundsPath              = "/uapi/domestic-stock/v1/quotations/mktfunds"
-	dailyItemChartPricePath      = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-	indexMasterDownloadURL       = "https://new.real.download.dws.co.kr/common/master/idxcode.mst.zip"
-	kospiMasterDownloadURL       = "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip"
-	kospiMasterFilename          = "kospi_code.mst"
-	vkospiCodeEnvKey             = "VKOSPI_INDEX_CODE"
-	kospiMasterCacheEnvKey       = "KOSPI_MASTER_CACHE_FILE"
-	kospiActualPBRCacheEnvKey    = "KOSPI_ACTUAL_PBR_CACHE_FILE"
-	kospiActualPBRRPMEnvKey      = "KOSPI_ACTUAL_PBR_RATE_LIMIT_RPM"
-	kospiActualPBRDebugEnvKey    = "KOSPI_ACTUAL_PBR_DEBUG"
-	kospiActualPBRProgressEnvKey = "KOSPI_ACTUAL_PBR_PROGRESS"
-	kospiProxyScaleEnvKey        = "KOSPI_PROXY_PBR_EARNINGS_SCALE"
-	defaultProgramMarketClass    = "K"
-	defaultKOSPIMasterCache      = ".cache/kospi_code.mst"
-	defaultKOSPIActualPBRCache   = ".cache/kospi_actual_pbr.json"
+	marketTimePath                = "/uapi/domestic-stock/v1/quotations/market-time"
+	inquirePricePath              = "/uapi/domestic-stock/v1/quotations/inquire-price"
+	inquireIndexPricePath         = "/uapi/domestic-stock/v1/quotations/inquire-index-price"
+	programTradeTodayPath         = "/uapi/domestic-stock/v1/quotations/comp-program-trade-today"
+	viStatusPath                  = "/uapi/domestic-stock/v1/quotations/inquire-vi-status"
+	marketFundsPath               = "/uapi/domestic-stock/v1/quotations/mktfunds"
+	dailyItemChartPricePath       = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+	creditBalancePath             = "/uapi/domestic-stock/v1/ranking/credit-balance"
+	dailyCreditBalancePath        = "/uapi/domestic-stock/v1/quotations/daily-credit-balance"
+	investorProgramTradeTodayPath = "/uapi/domestic-stock/v1/quotations/investor-program-trade-today"
+	investorTimeByMarketPath      = "/uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market"
+	indexMasterDownloadURL        = "https://new.real.download.dws.co.kr/common/master/idxcode.mst.zip"
+	kospiMasterDownloadURL        = "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip"
+	kospiMasterFilename           = "kospi_code.mst"
+	vkospiCodeEnvKey              = "VKOSPI_INDEX_CODE"
+	kospiMasterCacheEnvKey        = "KOSPI_MASTER_CACHE_FILE"
+	kospiActualPBRCacheEnvKey     = "KOSPI_ACTUAL_PBR_CACHE_FILE"
+	kospiActualPBRRPMEnvKey       = "KOSPI_ACTUAL_PBR_RATE_LIMIT_RPM"
+	kospiActualPBRDebugEnvKey     = "KOSPI_ACTUAL_PBR_DEBUG"
+	kospiActualPBRProgressEnvKey  = "KOSPI_ACTUAL_PBR_PROGRESS"
+	kospiProxyScaleEnvKey         = "KOSPI_PROXY_PBR_EARNINGS_SCALE"
+	defaultProgramMarketClass     = "K"
+	defaultKOSPIMasterCache       = ".cache/kospi_code.mst"
+	defaultKOSPIActualPBRCache    = ".cache/kospi_actual_pbr.json"
 )
 
 const (
-	marketTimeTRID          = "HHMCM000002C0"
-	inquirePriceTRID        = "FHKST01010100"
-	inquireIndexPriceTRID   = "FHPUP02100000"
-	programTradeTodayTRID   = "FHPPG04600101"
-	viStatusTRID            = "FHPST01390000"
-	marketFundsTRID         = "FHKST649100C0"
-	dailyItemChartPriceTRID = "FHKST03010100"
+	marketTimeTRID                = "HHMCM000002C0"
+	inquirePriceTRID              = "FHKST01010100"
+	inquireIndexPriceTRID         = "FHPUP02100000"
+	programTradeTodayTRID         = "FHPPG04600101"
+	viStatusTRID                  = "FHPST01390000"
+	marketFundsTRID               = "FHKST649100C0"
+	dailyItemChartPriceTRID       = "FHKST03010100"
+	creditBalanceTRID             = "FHKST17010000"
+	dailyCreditBalanceTRID        = "FHKST130400C0"
+	investorProgramTradeTodayTRID = "HHPPG046600C1"
+	investorTimeByMarketTRID      = "FHPTJ04030000"
 )
 
 var (
-	defaultVKOSPICandidates = []string{"2050"}
+	defaultVKOSPICandidates = []string{"0503", "2050"} // 0503: idxcode.mst에서 확인된 VKOSPI 코드
 	indexCodePattern        = regexp.MustCompile(`^\s*(\d{5})`)
 	kospiPart2Width         = 227
 	kospiPart2FieldWidths   = []int{

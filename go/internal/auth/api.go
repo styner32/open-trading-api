@@ -9,9 +9,15 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
-const expiredTokenMessageCode = "EGW00123"
+const (
+	expiredTokenMessageCode  = "EGW00123" // 토큰 만료
+	rateLimitMessageCode     = "EGW00201" // 초당 거래건수 초과
+	rateLimitRetryDelay      = 3 * time.Second
+	rateLimitMaxRetries      = 3
+)
 
 type RESTResponse struct {
 	StatusCode    int
@@ -80,7 +86,7 @@ func (client *KIClient) do(
 	payload any,
 	extraHeaders map[string]string,
 ) (*RESTResponse, error) {
-	return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, true)
+	return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, true, 0)
 }
 
 func (client *KIClient) doWithRetry(
@@ -93,6 +99,7 @@ func (client *KIClient) doWithRetry(
 	payload any,
 	extraHeaders map[string]string,
 	allowRefresh bool,
+	rateLimitRetry int,
 ) (*RESTResponse, error) {
 	if client.AuthToken == "" {
 		return nil, fmt.Errorf("auth token is empty; call GetAuthToken() and SetAuthToken() first")
@@ -165,8 +172,16 @@ func (client *KIClient) doWithRetry(
 		if _, err := client.RefreshAuthToken(ctx); err != nil {
 			return response, fmt.Errorf("token expired and refresh failed: %w", err)
 		}
+		return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, false, rateLimitRetry)
+	}
 
-		return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, false)
+	if response.MessageCode() == rateLimitMessageCode && rateLimitRetry < rateLimitMaxRetries {
+		select {
+		case <-ctx.Done():
+			return response, ctx.Err()
+		case <-time.After(rateLimitRetryDelay):
+		}
+		return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, allowRefresh, rateLimitRetry+1)
 	}
 
 	if resp.StatusCode != http.StatusOK {

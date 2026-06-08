@@ -142,6 +142,16 @@ func (s *Service) CompInterest(ctx context.Context) (*auth.RESTResponse, error) 
 }
 
 func (s *Service) InquireIndexDailyPrice(ctx context.Context, indexCode string, fromDate string) ([]map[string]any, error) {
+	return s.inquireIndexDailyPriceWithMarket(ctx, indexCode, fromDate, "U")
+}
+
+// InquireVKOSPIDailyPrice는 VKOSPI 일별 이력 조회입니다.
+// idxcode.mst 기준 idx_div="0", idx_code="0503"이나 TRID는 "U" 마켓코드만 허용.
+func (s *Service) InquireVKOSPIDailyPrice(ctx context.Context, indexCode string, fromDate string) ([]map[string]any, error) {
+	return s.inquireIndexDailyPriceWithMarket(ctx, indexCode, fromDate, "U")
+}
+
+func (s *Service) inquireIndexDailyPriceWithMarket(ctx context.Context, indexCode string, fromDate string, marketDivCode string) ([]map[string]any, error) {
 	indexCode = strings.TrimSpace(indexCode)
 	fromDate = strings.TrimSpace(fromDate)
 	if indexCode == "" {
@@ -153,7 +163,7 @@ func (s *Service) InquireIndexDailyPrice(ctx context.Context, indexCode string, 
 
 	params := map[string]string{
 		"FID_PERIOD_DIV_CODE":    "D",
-		"FID_COND_MRKT_DIV_CODE": "U",
+		"FID_COND_MRKT_DIV_CODE": marketDivCode,
 		"FID_INPUT_ISCD":         indexCode,
 		"FID_INPUT_DATE_1":       fromDate,
 	}
@@ -178,3 +188,4 @@ func (s *Service) InquireIndexDailyPrice(ctx context.Context, indexCode string, 
 	}
 	return rows, nil
 }
+
