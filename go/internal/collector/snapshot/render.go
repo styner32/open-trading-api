@@ -51,10 +51,24 @@ func renderPrice(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	b.WriteString(fmt.Sprintf("- 고가: %s%s\n", number(pr.High, 2), highNote))
 	b.WriteString(fmt.Sprintf("- 저가: %s\n", number(pr.Low, 2)))
 
+	// 전일 종가: KIS API의 stck_prdy_clpr (pr.PreviousClose)가 권위값.
+	// 저장된 JSON의 p.Price.Close는 스냅샷 실행 시점에 따라 stale할 수 있음.
 	closeLine := number(pr.Close, 2)
+	changePt := pr.Close - pr.PreviousClose
+	changePct := changePt / pr.PreviousClose * 100
+	closeLine += fmt.Sprintf("  [전일 종가 %s, %s (%s)]",
+		number(pr.PreviousClose, 2), signedNumber(changePt, 2), percent(changePct))
+
+	// 저장된 전일 스냅샷과 교차 검증 (off-by-one 감지)
 	if p != nil && p.Price != nil && p.Price.Close > 0 {
-		diff := pr.Close - p.Price.Close
-		closeLine += fmt.Sprintf("  [전일 종가 %s, %s]", number(p.Price.Close, 2), signedNumber(diff, 2))
+		prevJSON := p.Price.Close
+		if pr.PreviousClose > 0 {
+			divergence := (prevJSON - pr.PreviousClose) / pr.PreviousClose * 100
+			if divergence > 0.5 || divergence < -0.5 {
+				closeLine += fmt.Sprintf("\n  - ⚠ 전일 스냅샷(%s) 종가 %s와 KIS 전일종가 %s 불일치 (%.2f%%) — 스냅샷 저장 시점 오류 가능",
+					p.Date, number(prevJSON, 2), number(pr.PreviousClose, 2), divergence)
+			}
+		}
 	}
 	b.WriteString("- 종가: " + closeLine + "\n")
 	b.WriteString(fmt.Sprintf("- 일중 변동폭: %sp (%s)\n\n", number(pr.RangePoints, 2), percentPlain(pr.RangePercent)))
@@ -101,10 +115,12 @@ func renderImpact(b *strings.Builder, s *Snapshot) {
 	}
 	b.WriteString("- 반도체 매도 집중도: " + semiconductor + "\n")
 	b.WriteString("- 코스피200 선물 변동률: " + quotePercent(i.FuturesChangePercent, i.FuturesReason) + "\n")
-	if i.BasisPoints != nil && i.BasisPercent != nil {
-		b.WriteString(fmt.Sprintf("- 선물-현물 베이시스: %sp (%s)\n", number(*i.BasisPoints, 1), percent(*i.BasisPercent)))
+	// 베이시스: Section 11 (LateSession)에서 KOSPI200 코드 "2001"로 정확히 계산한 값 참조
+	if s.LateSession != nil && s.LateSession.SpotPrice > 0 {
+		b.WriteString(fmt.Sprintf("- 선물-현물 베이시스: %sp (%s) — Section 11 참조\n",
+			number(s.LateSession.BasisPoint, 1), percent(s.LateSession.BasisRate)))
 	} else {
-		b.WriteString("- 선물-현물 베이시스: " + na(i.BasisReason) + "\n")
+		b.WriteString("- 선물-현물 베이시스: Section 11 참조\n")
 	}
 	sidecar := na("manual input not provided")
 	if i.SidecarStatus == "triggered" {

@@ -206,7 +206,7 @@ func renderConcentration(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 }
 
 func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
-	b.WriteString("## 11. 막판 수급 및 Capitulation 분석\n")
+	b.WriteString("## 11. 막판 수급 및 다중 패턴 분석\n")
 	ls := s.LateSession
 	if ls == nil {
 		b.WriteString("- " + na(sectionErr(s, "late_session")) + "\n\n")
@@ -241,13 +241,69 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		b.WriteString(fmt.Sprintf("  - 외국인(시장): %s | 기관(시장): %s\n", eok(ls.CloseSessionForeignNetEok), eok(ls.CloseSessionOrganNetEok)))
 	}
 
-	// 5) Capitulation 이벤트 감지 표시
-	b.WriteString("- Capitulation 감지 점수: " + fmt.Sprintf("%.1f / 10\n", ls.CapitulationScore))
-	if ls.CapitulationEvent {
-		b.WriteString("  - **상태**: 🚨 **LATE-SESSION CAPITULATION EVENT DETECTED**\n")
-		b.WriteString("  - **설명**: 장중 고점 대비 반등을 시도했으나 장 막판 동시호가에 외국인 및 비차익 프로그램 매도 폭탄이 쏟아져 당일 저가 부근에서 마감하였습니다. 익일 시초가 반대매매 갭다운에 유의하십시오.\n")
-	} else {
-		b.WriteString("  - **상태**: 정상 (감지되지 않음)\n")
+	// 5) 다중 막판 패턴 감지 요약 테이블
+	b.WriteString("- **다중 막판 패턴 감지 요약 (Late-Session Pattern Analysis)**:\n\n")
+
+	status := func(score float64, name string) string {
+		if ls.PatternDetected && ls.PrimaryPattern == name {
+			switch name {
+			case "Late-Session Capitulation":
+				return "**🚨 주도 패턴 (LSC)**"
+			case "Late-Session Short Squeeze":
+				return "**🚀 주도 패턴 (LSS)**"
+			case "Window Dressing":
+				return "**📈 주도 패턴 (WD)**"
+			case "ETF Rebalancing Impact":
+				return "**⚖️ 주도 패턴 (ERI)**"
+			case "Expiration Basis Arbitrage":
+				return "**⚡ 주도 패턴 (EBA)**"
+			default:
+				return "**🔥 주도 패턴 (Dominant)**"
+			}
+		}
+		if score >= 2.0 {
+			return "⚠️ 감지 (Detected)"
+		}
+		return "정상 (Normal)"
 	}
+
+	b.WriteString("| 패턴명 (Pattern Name) | 감지 점수 (Score) | 임계값 (Threshold) | 판정 상태 (Status) |\n")
+	b.WriteString("| :--- | :---: | :---: | :--- |\n")
+	b.WriteString(fmt.Sprintf("| 1. **Late-Session Capitulation** (후반 투매) | `%.1f` | 2.0 | %s |\n", ls.CapitulationScore, status(ls.CapitulationScore, "Late-Session Capitulation")))
+	b.WriteString(fmt.Sprintf("| 2. **Late-Session Short Squeeze** (후반 숏스퀴즈) | `%.1f` | 2.0 | %s |\n", ls.ShortSqueezeScore, status(ls.ShortSqueezeScore, "Late-Session Short Squeeze")))
+	b.WriteString(fmt.Sprintf("| 3. **Window Dressing** (인위적 종가 관리) | `%.1f` | 2.0 | %s |\n", ls.WindowDressingScore, status(ls.WindowDressingScore, "Window Dressing")))
+	b.WriteString(fmt.Sprintf("| 4. **ETF Rebalancing Impact** (패시브 리밸런싱) | `%.1f` | 2.0 | %s |\n", ls.RebalancingScore, status(ls.RebalancingScore, "ETF Rebalancing Impact")))
+	b.WriteString(fmt.Sprintf("| 5. **Expiration Basis Arbitrage** (만기일 차익 청산) | `%.1f` | 2.0 | %s |\n", ls.ExpirationArbitrageScore, status(ls.ExpirationArbitrageScore, "Expiration Basis Arbitrage")))
 	b.WriteString("\n")
+
+	// 6) 패턴 세부 정보 및 경고 카드
+	if ls.PatternDetected {
+		b.WriteString("- **패턴 감지 세부 정보**:\n\n")
+		switch ls.PrimaryPattern {
+		case "Late-Session Capitulation":
+			b.WriteString("> [!WARNING]\n")
+			b.WriteString(fmt.Sprintf("> **🚨 LATE-SESSION CAPITULATION EVENT DETECTED (감지 점수: %.1f)**\n", ls.CapitulationScore))
+			b.WriteString("> 장중 고점 대비 반등을 시도했으나 장 막판 동시호가에 외국인 및 비차익 프로그램 매도 폭탄이 쏟아져 당일 저가 부근에서 마감하였습니다. 익일 시초가 반대매매 갭다운에 유의하십시오.\n\n")
+		case "Late-Session Short Squeeze":
+			b.WriteString("> [!TIP]\n")
+			b.WriteString(fmt.Sprintf("> **🚀 LATE-SESSION SHORT SQUEEZE EVENT DETECTED (감지 점수: %.1f)**\n", ls.ShortSqueezeScore))
+			b.WriteString("> 장 막판 오버나잇 리스크를 회피하려는 숏커버/숏스퀴즈 물량이 집중 유입되며 당일 고가 부근에서 마감하였습니다. 숏 포지션 청산에 따른 매수세가 종가 동시호가까지 강하게 이어졌습니다.\n\n")
+		case "Window Dressing":
+			b.WriteString("> [!NOTE]\n")
+			b.WriteString(fmt.Sprintf("> **📈 WINDOW DRESSING EVENT DETECTED (감지 점수: %.1f)**\n", ls.WindowDressingScore))
+			b.WriteString("> 분기/반기/연말 영업일 종가 동시호가에 기관투자자의 인위적인 포트폴리오 수익률 관리 매수세가 집중 유입되었습니다. 본질 가치와 무관하게 종가가 왜곡되었을 가능성이 있으므로 익일 정상화(되돌림) 흐름에 주의하십시오.\n\n")
+		case "ETF Rebalancing Impact":
+			b.WriteString("> [!IMPORTANT]\n")
+			b.WriteString(fmt.Sprintf("> **⚖️ ETF REBALANCING IMPACT EVENT DETECTED (감지 점수: %.1f)**\n", ls.RebalancingScore))
+			b.WriteString("> 주요 지수(MSCI, KRX300 등) 리밸런싱일을 맞이하여 장 마감 동시호가에 대규모 패시브 자금의 기계적 매매(프로그램/외국인)가 대거 집행되었습니다. 단기 수급 왜곡에 따른 일시적 가격 변동성이 극대화되었습니다.\n\n")
+		case "Expiration Basis Arbitrage":
+			b.WriteString("> [!WARNING]\n")
+			b.WriteString(fmt.Sprintf("> **⚡ EXPIRATION BASIS ARBITRAGE EVENT DETECTED (감지 점수: %.1f)**\n", ls.ExpirationArbitrageScore))
+			b.WriteString("> 선물/옵션 만기일을 맞이하여 선물-현물 괴리(Basis) 청산을 위한 대규모 매수/매도 프로그램 차익거래 물량이 종가 동시호가에 대거 쏟아졌습니다. 청산 방향에 따른 강한 왜곡 및 가격 충격이 감지되었습니다.\n\n")
+		default:
+			b.WriteString(fmt.Sprintf("- **상태**: ⚠ 패턴 감지됨 (%s, 점수: %.1f)\n\n", ls.PrimaryPattern, ls.CapitulationScore))
+		}
+	} else {
+		b.WriteString("- **패턴 감지 세부 정보**: 정상 상태 (특이 수급 패턴이 감지되지 않음)\n\n")
+	}
 }

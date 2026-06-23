@@ -3,7 +3,9 @@ package snapshot
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 )
 
 // collectLateSession gathers late-session supply-demand statistics, basis, and checks for capitulation.
@@ -32,8 +34,8 @@ func collectLateSession(ctx context.Context, deps Deps, date string, priceSec *P
 		fmt.Printf("[latesession] Note: close session investor flow not fully available: %v\n", err)
 	}
 
-	// 5. Capitulation 이벤트 판정
-	evaluateCapitulation(priceSec, section)
+	// 5. 다중 패턴 감지 및 판정
+	evaluateLateSessionPatterns(priceSec, section)
 
 	return section, nil
 }
@@ -96,6 +98,11 @@ func fillProgramTradeToday(ctx context.Context, deps Deps, sec *LateSessionSecti
 	}
 
 	rowsList := rows(resp, "output1")
+
+	var foreignMatched, organMatched, totalMatched bool
+	var individualEok float64
+	var individualFound bool
+
 	for _, row := range rowsList {
 		nameVal, ok := row["invr_cls_name"].(string)
 		if !ok {
@@ -108,14 +115,35 @@ func fillProgramTradeToday(ctx context.Context, deps Deps, sec *LateSessionSecti
 		netAmtEok := netAmt / 100.0
 
 		name := strings.TrimSpace(nameVal)
-		if strings.Contains(name, "외국인") {
+		switch {
+		case strings.Contains(name, "외국인"):
 			sec.KOSPINetNonArbitrageForeign = netAmtEok
-		} else if strings.Contains(name, "기관") {
+			foreignMatched = true
+		case strings.Contains(name, "기관"):
 			sec.KOSPINetNonArbitrageOrgan = netAmtEok
-		} else if strings.Contains(name, "합계") || strings.Contains(name, "전체") {
+			organMatched = true
+		case strings.Contains(name, "개인") || strings.Contains(name, "일반"):
+			individualEok = netAmtEok
+			individualFound = true
+		case name == "계" || strings.Contains(name, "합계") || strings.Contains(name, "전체"):
 			sec.KOSPINetNonArbitrageTotal = netAmtEok
+			totalMatched = true
+		default:
+			fmt.Printf("[latesession] Warning: unmatched invr_cls_name '%s' (nabt_ntby_amt=%.0f)\n", name, netAmt)
 		}
 	}
+
+	// Fallback: Total 미매칭 시 개별 합산으로 보정
+	if !totalMatched && (foreignMatched || organMatched) {
+		computed := sec.KOSPINetNonArbitrageForeign + sec.KOSPINetNonArbitrageOrgan
+		if individualFound {
+			computed += individualEok
+		}
+		sec.KOSPINetNonArbitrageTotal = computed
+		fmt.Printf("[latesession] Warning: '합계'/'전체' row not found, computed total=%.0f from components (foreign=%.0f organ=%.0f individual=%.0f)\n",
+			computed, sec.KOSPINetNonArbitrageForeign, sec.KOSPINetNonArbitrageOrgan, individualEok)
+	}
+
 	return nil
 }
 
@@ -152,26 +180,21 @@ func fillLateProgramFlow(ctx context.Context, deps Deps, sec *LateSessionSection
 			continue
 		}
 
-		// 15:00 부근 매칭 (HHMMSS)
 		if strings.HasPrefix(hourVal, "1500") || (strings.Compare(hourVal, "150000") >= 0 && strings.Compare(hourVal, "150500") <= 0) {
 			p1500 = val
 			found1500 = true
 		}
-		// 15:20 부근 매칭
 		if strings.HasPrefix(hourVal, "1520") || (strings.Compare(hourVal, "152000") >= 0 && strings.Compare(hourVal, "152200") <= 0) {
 			p1520 = val
 			found1520 = true
 		}
-		// 15:30 마감 부근 매칭
 		if strings.HasPrefix(hourVal, "1530") || strings.Compare(hourVal, "153000") >= 0 {
 			p1530 = val
 			found1530 = true
 		}
 	}
 
-	// 15:00/15:20/15:30 명시적 데이터가 존재하지 않는 경우를 위한 폴백 (예: 장마감 한참 후 조회하여 데이터 컷 발생 시)
 	if !found1530 && len(rowsList) > 0 {
-		// 최신 시각 데이터(보통 인덱스 0)를 15:30으로 폴백
 		val, ok := num(rowsList[0], "whol_smtn_ntby_tr_pbmn")
 		if ok {
 			p1530 = val
@@ -180,7 +203,6 @@ func fillLateProgramFlow(ctx context.Context, deps Deps, sec *LateSessionSection
 	}
 
 	if !found1500 && len(rowsList) > 0 {
-		// 가장 오래된 시각 데이터(마지막 인덱스)를 15:00으로 폴백
 		lastIdx := len(rowsList) - 1
 		val, ok := num(rowsList[lastIdx], "whol_smtn_ntby_tr_pbmn")
 		if ok {
@@ -190,7 +212,6 @@ func fillLateProgramFlow(ctx context.Context, deps Deps, sec *LateSessionSection
 	}
 
 	if !found1520 && len(rowsList) > 0 {
-		// 15:30 마감 10분 전 혹은 중간 로우(마지막 1/3 지점)를 15:20으로 폴백
 		targetIdx := len(rowsList) * 2 / 3
 		if targetIdx >= len(rowsList) {
 			targetIdx = len(rowsList) - 1
@@ -202,7 +223,6 @@ func fillLateProgramFlow(ctx context.Context, deps Deps, sec *LateSessionSection
 		}
 	}
 
-	// 변화량 계산 (백만원 -> 억원)
 	if found1500 && found1530 {
 		sec.LateProgramNetEok = (p1530 - p1500) / 100.0
 	}
@@ -294,61 +314,129 @@ func fillCloseSessionInvestorFlow(ctx context.Context, deps Deps, sec *LateSessi
 	return nil
 }
 
-func evaluateCapitulation(priceSec *PriceSection, sec *LateSessionSection) {
+func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection) {
 	if priceSec == nil || priceSec.Low <= 0 {
+		sec.PrimaryPattern = "Normal (정상)"
 		return
 	}
 
+	// 기본 통계 계산
 	volatilityRange := (priceSec.High - priceSec.Low) / priceSec.Low
 	closeToLow := (priceSec.Close - priceSec.Low) / priceSec.Low
+	closeToHigh := (priceSec.High - priceSec.Close) / priceSec.Low
 
-	score := 0.0
-
-	// 1) 고가 대비 반등 시도
-	if volatilityRange >= 0.01 {
-		score += 0.5
-	}
-	if volatilityRange >= 0.02 {
-		score += 0.5
-	}
-
-	// 2) 저점 부근 종가 마감
-	if closeToLow <= 0.003 {
-		score += 1.0
-	} else if closeToLow <= 0.006 {
-		score += 0.5
+	// 날짜 파싱 및 판정
+	t, err := time.Parse("20060102", sec.BusinessDate)
+	var isExpiration, isQuarterEnd, isRebalance bool
+	if err == nil {
+		isExpiration = checkOptionExpirationDay(t)
+		isQuarterEnd = checkQuarterEndDay(t)
+		isRebalance = checkRebalancingDay(t)
 	}
 
-	// 3) 15시 이후 장 막판 프로그램 순매도
-	if sec.LateProgramNetEok <= -300.0 {
-		score += 0.5
-	}
-	if sec.LateProgramNetEok <= -700.0 {
-		score += 0.5
-	}
+	// 1. Late-Session Capitulation (LSC) 스코어 계산
+	lscScore := 0.0
+	if volatilityRange >= 0.01 { lscScore += 0.5 }
+	if volatilityRange >= 0.02 { lscScore += 0.5 }
+	if closeToLow <= 0.003 { lscScore += 1.0 } else if closeToLow <= 0.006 { lscScore += 0.5 }
+	if sec.LateProgramNetEok <= -300.0 { lscScore += 0.5 }
+	if sec.LateProgramNetEok <= -700.0 { lscScore += 0.5 }
+	if sec.CloseSessionForeignNetEok <= -100.0 { lscScore += 0.5 }
+	if sec.CloseSessionForeignNetEok <= -300.0 { lscScore += 0.5 }
+	if sec.CloseSessionProgramNetEok <= -200.0 { lscScore += 0.5 }
+	if sec.CloseSessionProgramNetEok <= -500.0 { lscScore += 0.5 }
+	if sec.BasisPoint < -0.5 { lscScore += 0.5 }
 
-	// 4) 종가 동시호가(15:20~15:30) 외인 순매도 또는 프로그램 순매도
-	if sec.CloseSessionForeignNetEok <= -100.0 {
-		score += 0.5
-	}
-	if sec.CloseSessionForeignNetEok <= -300.0 {
-		score += 0.5
-	}
-	if sec.CloseSessionProgramNetEok <= -200.0 {
-		score += 0.5
-	}
-	if sec.CloseSessionProgramNetEok <= -500.0 {
-		score += 0.5
-	}
+	// 2. Late-Session Short Squeeze (LSS) 스코어 계산
+	lssScore := 0.0
+	if volatilityRange >= 0.01 { lssScore += 0.5 }
+	if volatilityRange >= 0.02 { lssScore += 0.5 }
+	if closeToHigh <= 0.003 { lssScore += 1.0 } else if closeToHigh <= 0.006 { lssScore += 0.5 }
+	if sec.LateProgramNetEok >= 300.0 { lssScore += 0.5 }
+	if sec.LateProgramNetEok >= 700.0 { lssScore += 0.5 }
+	if sec.CloseSessionForeignNetEok >= 100.0 { lssScore += 0.5 }
+	if sec.CloseSessionForeignNetEok >= 300.0 { lssScore += 0.5 }
+	if sec.CloseSessionProgramNetEok >= 200.0 { lssScore += 0.5 }
+	if sec.CloseSessionProgramNetEok >= 500.0 { lssScore += 0.5 }
+	if sec.BasisPoint > 0.5 { lssScore += 0.5 }
 
-	// 5) 베이시스 백워데이션 상태
-	if sec.BasisPoint < -0.5 {
-		score += 0.5
-	}
+	// 3. Window Dressing (WD) 스코어 계산
+	wdScore := 0.0
+	if isQuarterEnd { wdScore += 1.5 }
+	if sec.CloseSessionOrganNetEok >= 150.0 { wdScore += 1.0 }
+	if sec.CloseSessionOrganNetEok >= 300.0 { wdScore += 1.0 }
+	if closeToHigh <= 0.008 { wdScore += 0.5 }
 
-	sec.CapitulationScore = score
+	// 4. ETF Rebalancing Impact (ERI) 스코어 계산
+	eriScore := 0.0
+	if isRebalance || isQuarterEnd { eriScore += 1.0 }
+	absProg := math.Abs(sec.CloseSessionProgramNetEok)
+	if absProg >= 400.0 { eriScore += 1.5 }
+	if absProg >= 800.0 { eriScore += 1.5 }
+	if math.Abs(sec.CloseSessionForeignNetEok) >= 300.0 { eriScore += 1.0 }
 
-	if score >= 2.0 {
-		sec.CapitulationEvent = true
+	// 5. Expiration Basis Arbitrage (EBA) 스코어 계산
+	ebaScore := 0.0
+	if isExpiration { ebaScore += 2.0 }
+	absBasis := math.Abs(sec.BasisPoint)
+	if absBasis >= 1.0 { ebaScore += 1.0 }
+	if absBasis >= 2.0 { ebaScore += 1.0 }
+	if math.Abs(sec.CloseSessionProgramNetEok) >= 300.0 { ebaScore += 1.0 }
+
+	// 각 스코어 저장
+	sec.CapitulationScore = lscScore
+	sec.ShortSqueezeScore = lssScore
+	sec.WindowDressingScore = wdScore
+	sec.RebalancingScore = eriScore
+	sec.ExpirationArbitrageScore = ebaScore
+
+	// 최대 점수 비교를 통한 지배 패턴 선정
+	maxScore := 0.0
+	pattern := "Normal (정상)"
+
+	if lscScore > maxScore { maxScore = lscScore; pattern = "Late-Session Capitulation" }
+	if lssScore > maxScore { maxScore = lssScore; pattern = "Late-Session Short Squeeze" }
+	if wdScore > maxScore { maxScore = wdScore; pattern = "Window Dressing" }
+	if eriScore > maxScore { maxScore = eriScore; pattern = "ETF Rebalancing Impact" }
+	if ebaScore > maxScore { maxScore = ebaScore; pattern = "Expiration Basis Arbitrage" }
+
+	// 임계값 2.0 이상 획득 시 감지 처리
+	if maxScore >= 2.0 {
+		sec.PrimaryPattern = pattern
+		sec.PatternDetected = true
+	} else {
+		sec.PrimaryPattern = "Normal (정상)"
+		sec.PatternDetected = false
 	}
+}
+
+// checkOptionExpirationDay 검증: 3, 6, 9, 12월의 둘째 목요일인지 판단
+func checkOptionExpirationDay(t time.Time) bool {
+	m := t.Month()
+	if m != time.March && m != time.June && m != time.September && m != time.December {
+		return false
+	}
+	if t.Weekday() != time.Thursday {
+		return false
+	}
+	// 둘째 목요일은 날짜 범위가 무조건 8~14일 사이임
+	return t.Day() >= 8 && t.Day() <= 14
+}
+
+// checkQuarterEndDay 검증: 3/6/9/12월 말 영업일 부근 (26~31일)
+func checkQuarterEndDay(t time.Time) bool {
+	m := t.Month()
+	if m != time.March && m != time.June && m != time.September && m != time.December {
+		return false
+	}
+	return t.Day() >= 26
+}
+
+// checkRebalancingDay 검증: 2/5/8/11월 말일 부근 (패시브 리밸런싱은 분기말/반기말 부근에 자주 집중됨)
+func checkRebalancingDay(t time.Time) bool {
+	m := t.Month()
+	if m != time.February && m != time.May && m != time.August && m != time.November {
+		return false
+	}
+	return t.Day() >= 25
 }

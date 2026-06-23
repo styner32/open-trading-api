@@ -76,8 +76,13 @@ type LateSessionSection struct {
 	CloseSessionProgramNetEok     float64 `json:"close_session_program_net_eok"`
 	CloseSessionForeignNetEok     float64 `json:"close_session_foreign_net_eok"`
 	CloseSessionOrganNetEok       float64 `json:"close_session_organ_net_eok"`
-	CapitulationEvent             bool    `json:"capitulation_event"`
+	PrimaryPattern                string  `json:"primary_pattern"`
 	CapitulationScore             float64 `json:"capitulation_score"`
+	ShortSqueezeScore             float64 `json:"short_squeeze_score"`
+	WindowDressingScore           float64 `json:"window_dressing_score"`
+	RebalancingScore              float64 `json:"rebalancing_score"`
+	ExpirationArbitrageScore      float64 `json:"expiration_arbitrage_score"`
+	PatternDetected               bool    `json:"pattern_detected"`
 }
 
 type Snapshot struct {

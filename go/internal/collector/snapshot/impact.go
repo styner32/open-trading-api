@@ -18,17 +18,15 @@ type ImpactSection struct {
 	// 반도체
 	SemiconductorSellConcentrationPct *float64
 	SemiconductorReason               string
-	// Fix 3: 선물 + 베이시스
+	// 선물
 	FuturesChangePercent *float64
 	FuturesPrice         *float64
 	FuturesCode          string
 	FuturesReason        string
-	BasisPoints          *float64 // 선물가 - 코스피200 지수
-	BasisPercent         *float64 // 베이시스율
-	BasisReason          string
 	// 사이드카
 	SidecarStatus string
 	SidecarTime   string
+	// 베이시스는 Section 11 (LateSession)으로 통합 — 중복 API 호출 및 코드 불일치(0002 vs 2001) 제거
 }
 
 // collectImpact computes trading-value sell pressure and semiconductor concentration.
@@ -64,8 +62,8 @@ func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSectio
 		}
 	}
 	section.collectFutures(ctx, deps.DomesticFuture, date)
-	// Fix 3: 베이시스 계산
-	section.collectBasis(ctx, deps.DomesticStock)
+	// 베이시스는 Section 11 (LateSession.fillBasis)에서 KOSPI200 코드 "2001"로 정확히 계산.
+	// Section 3의 "0002" 코드 사용은 필드 불일치(현물=10057 vs 정상=1459)를 유발하여 제거됨.
 	return section
 }
 
@@ -112,40 +110,9 @@ func (s *ImpactSection) collectFutures(ctx context.Context, futures DomesticFutu
 	}
 }
 
-func (s *ImpactSection) collectBasis(ctx context.Context, stock DomesticStock) {
-	if s.FuturesPrice == nil {
-		s.BasisReason = "futures price unavailable"
-		return
-	}
-	if stock == nil {
-		s.BasisReason = "domestic stock dependency is nil"
-		return
-	}
-	resp, err := stock.InquireIndexPrice(ctx, "0002")
-	if err != nil {
-		s.BasisReason = fmt.Sprintf("KOSPI200 index: %v", err)
-		return
-	}
-	row := firstRow(resp, "output")
-	if row == nil {
-		s.BasisReason = "KOSPI200 output missing"
-		return
-	}
-	indexPrice, ok := num(row, "bstp_nmix_prpr", "stck_prpr")
-	if !ok || indexPrice <= 0 {
-		s.BasisReason = "KOSPI200 price missing"
-		return
-	}
-	basis := *s.FuturesPrice - indexPrice
-	basisPct := basis / indexPrice * 100
-	// sanity check: 베이시스율이 ±10% 초과면 필드명 불일치로 판단
-	if basisPct < -10 || basisPct > 10 {
-		s.BasisReason = fmt.Sprintf("basis out of range (%.1f%%, futures=%.2f index=%.2f) — field mismatch?", basisPct, *s.FuturesPrice, indexPrice)
-		return
-	}
-	s.BasisPoints = ptr(basis)
-	s.BasisPercent = ptr(basisPct)
-}
+// collectBasis: 제거됨 — Section 11 (LateSession.fillBasis)로 통합.
+// Section 3의 InquireIndexPrice("0002")는 KOSPI200이 아닌 다른 지수를 반환하여
+// "out of range -85.3%" 오류를 유발했음. Section 11의 "2001" 코드가 올바른 KOSPI200 조회.
 
 func normalizeSidecar(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {

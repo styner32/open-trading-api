@@ -20,14 +20,27 @@ type PriceSection struct {
 
 // collectPrice computes intraday range as high-low and range percent as
 // (high-low)/previous close*100.
+//
+// Primary: InquireIndexDailyPrice에서 date 매칭 row 사용.
+// Fallback 1: date 매칭 실패 시 dailyRows의 가장 최근 row 사용 (날짜 라벨링은 해당 row의 실제 날짜).
+// Fallback 2: today에 한해 InquireIndexPrice 실시간 조회 (staleness 감지 포함).
 func collectPrice(ctx context.Context, stock DomesticStock, date string) (*PriceSection, error) {
 	if stock == nil {
 		return nil, fmt.Errorf("domestic stock dependency is nil")
 	}
 	dailyRows, err := stock.InquireIndexDailyPrice(ctx, "0001", date)
 	if err == nil {
+		// 1차: 정확한 날짜 매칭
 		if section, ok := priceFromRows(dailyRows, date); ok {
 			return section, nil
+		}
+		// 1-1차: 가장 최근 row 사용 (rows[0]이 최신, 내림차순)
+		if len(dailyRows) > 0 {
+			actualDate := fmt.Sprintf("%v", dailyRows[0]["stck_bsop_date"])
+			if section, ok := priceFromRow(dailyRows[0], actualDate); ok {
+				fmt.Printf("[price] Warning: date %s not found in daily rows, using latest available row %s\n", date, actualDate)
+				return section, nil
+			}
 		}
 	}
 	today, _ := normalizeDate("")
@@ -44,7 +57,13 @@ func collectPrice(ctx context.Context, stock DomesticStock, date string) (*Price
 		}
 		return nil, fallbackErr
 	}
-	if section, ok := priceFromRow(firstRow(resp, "output"), date); ok {
+	row := firstRow(resp, "output")
+	if section, ok := priceFromRow(row, date); ok {
+		// Staleness 감지: close와 prevClose가 동일하면 장 시작 전 데이터일 가능성
+		if section.Close > 0 && section.PreviousClose > 0 && section.Close == section.PreviousClose {
+			fmt.Printf("[price] Warning: close (%.2f) == previousClose (%.2f) for %s — market may not have opened yet, data could be stale\n",
+				section.Close, section.PreviousClose, date)
+		}
 		return section, nil
 	}
 	return nil, fmt.Errorf("KOSPI index price output missing")

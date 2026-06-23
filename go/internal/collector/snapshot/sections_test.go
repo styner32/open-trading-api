@@ -324,8 +324,322 @@ func TestLateSession(t *testing.T) {
 		if got.CloseSessionForeignNetEok != -300.0 {
 			t.Errorf("expected close session foreign -300.0, got %.2f", got.CloseSessionForeignNetEok)
 		}
-		if !got.CapitulationEvent {
-			t.Errorf("expected CapitulationEvent to be true, got false (score: %.2f)", got.CapitulationScore)
+		if !got.PatternDetected {
+			t.Errorf("expected PatternDetected to be true, got false")
+		}
+		if got.PrimaryPattern != "Late-Session Capitulation" {
+			t.Errorf("expected PrimaryPattern to be 'Late-Session Capitulation', got '%s'", got.PrimaryPattern)
+		}
+	})
+
+	t.Run("short squeeze event detected", func(t *testing.T) {
+		progResp := &auth.RESTResponse{Body: map[string]any{"output1": []any{map[string]any{"invr_cls_name": "합계", "nabt_ntby_amt": "0"}}}}
+		compProgResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"bsop_hour": "153000", "whol_smtn_ntby_tr_pbmn": "80000"},
+					map[string]any{"bsop_hour": "152000", "whol_smtn_ntby_tr_pbmn": "0"},
+					map[string]any{"bsop_hour": "150000", "whol_smtn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		timeFlowResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"aspr_hour": "153000", "frgn_ntby_tr_pbmn": "30000", "orgn_ntby_tr_pbmn": "0"},
+					map[string]any{"aspr_hour": "152000", "frgn_ntby_tr_pbmn": "0", "orgn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp, compProg: compProgResp, timeFlow: timeFlowResp}
+		futures := fakeFuture{resp: &auth.RESTResponse{Body: map[string]any{"output": []any{map[string]any{"futs_prpr": "351.0"}}}}}
+		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
+		priceSec := &PriceSection{High: 100, Low: 90, Close: 99.9}
+
+		got, err := collectLateSession(context.Background(), deps, "20260515", priceSec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.PatternDetected {
+			t.Errorf("expected PatternDetected to be true")
+		}
+		if got.PrimaryPattern != "Late-Session Short Squeeze" {
+			t.Errorf("expected PrimaryPattern to be 'Late-Session Short Squeeze', got '%s'", got.PrimaryPattern)
+		}
+	})
+
+	t.Run("window dressing event detected", func(t *testing.T) {
+		progResp := &auth.RESTResponse{Body: map[string]any{"output1": []any{map[string]any{"invr_cls_name": "합계", "nabt_ntby_amt": "0"}}}}
+		compProgResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"bsop_hour": "153000", "whol_smtn_ntby_tr_pbmn": "0"},
+					map[string]any{"bsop_hour": "152000", "whol_smtn_ntby_tr_pbmn": "0"},
+					map[string]any{"bsop_hour": "150000", "whol_smtn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		timeFlowResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"aspr_hour": "153000", "frgn_ntby_tr_pbmn": "0", "orgn_ntby_tr_pbmn": "35000"},
+					map[string]any{"aspr_hour": "152000", "frgn_ntby_tr_pbmn": "0", "orgn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp, compProg: compProgResp, timeFlow: timeFlowResp}
+		futures := fakeFuture{resp: &auth.RESTResponse{Body: map[string]any{"output": []any{map[string]any{"futs_prpr": "350.0"}}}}}
+		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
+		priceSec := &PriceSection{High: 100, Low: 90, Close: 99.5}
+
+		// 20260630: Quarter End (June 30)
+		got, err := collectLateSession(context.Background(), deps, "20260630", priceSec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.PatternDetected {
+			t.Errorf("expected PatternDetected to be true")
+		}
+		if got.PrimaryPattern != "Window Dressing" {
+			t.Errorf("expected PrimaryPattern to be 'Window Dressing', got '%s'", got.PrimaryPattern)
+		}
+	})
+
+	t.Run("etf rebalancing impact event detected", func(t *testing.T) {
+		progResp := &auth.RESTResponse{Body: map[string]any{"output1": []any{map[string]any{"invr_cls_name": "합계", "nabt_ntby_amt": "0"}}}}
+		compProgResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"bsop_hour": "153000", "whol_smtn_ntby_tr_pbmn": "90000"},
+					map[string]any{"bsop_hour": "152000", "whol_smtn_ntby_tr_pbmn": "0"},
+					map[string]any{"bsop_hour": "150000", "whol_smtn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		timeFlowResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"aspr_hour": "153000", "frgn_ntby_tr_pbmn": "0", "orgn_ntby_tr_pbmn": "0"},
+					map[string]any{"aspr_hour": "152000", "frgn_ntby_tr_pbmn": "0", "orgn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp, compProg: compProgResp, timeFlow: timeFlowResp}
+		futures := fakeFuture{resp: &auth.RESTResponse{Body: map[string]any{"output": []any{map[string]any{"futs_prpr": "350.0"}}}}}
+		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
+		priceSec := &PriceSection{High: 100, Low: 90, Close: 95.0}
+
+		// 20260528: Rebalancing Day (>= 25 of May)
+		got, err := collectLateSession(context.Background(), deps, "20260528", priceSec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.PatternDetected {
+			t.Errorf("expected PatternDetected to be true")
+		}
+		if got.PrimaryPattern != "ETF Rebalancing Impact" {
+			t.Errorf("expected PrimaryPattern to be 'ETF Rebalancing Impact', got '%s'", got.PrimaryPattern)
+		}
+	})
+
+	t.Run("expiration basis arbitrage event detected", func(t *testing.T) {
+		progResp := &auth.RESTResponse{Body: map[string]any{"output1": []any{map[string]any{"invr_cls_name": "합계", "nabt_ntby_amt": "0"}}}}
+		compProgResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"bsop_hour": "153000", "whol_smtn_ntby_tr_pbmn": "-40000"},
+					map[string]any{"bsop_hour": "152000", "whol_smtn_ntby_tr_pbmn": "0"},
+					map[string]any{"bsop_hour": "150000", "whol_smtn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		timeFlowResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"aspr_hour": "153000", "frgn_ntby_tr_pbmn": "0", "orgn_ntby_tr_pbmn": "0"},
+					map[string]any{"aspr_hour": "152000", "frgn_ntby_tr_pbmn": "0", "orgn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp, compProg: compProgResp, timeFlow: timeFlowResp}
+		futures := fakeFuture{resp: &auth.RESTResponse{Body: map[string]any{"output": []any{map[string]any{"futs_prpr": "347.0"}}}}}
+		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
+		priceSec := &PriceSection{High: 100, Low: 90, Close: 95.0}
+
+		// 20260611: Expiration Day (second Thursday of June)
+		got, err := collectLateSession(context.Background(), deps, "20260611", priceSec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.PatternDetected {
+			t.Errorf("expected PatternDetected to be true")
+		}
+		if got.PrimaryPattern != "Expiration Basis Arbitrage" {
+			t.Errorf("expected PrimaryPattern to be 'Expiration Basis Arbitrage', got '%s'", got.PrimaryPattern)
+		}
+	})
+}
+
+// === Bug Fix Tests ===
+
+func TestRenderPriceUsesAPIPreviousClose(t *testing.T) {
+	t.Run("uses pr.PreviousClose as authoritative value", func(t *testing.T) {
+		s := &Snapshot{
+			Price: &PriceSection{
+				Date: "20260619", Open: 9100, High: 9385, Low: 9010,
+				Close: 9040.36, PreviousClose: 9063.84, // KIS API의 전일 종가 (올바른 6/18 종가)
+			},
+		}
+		out := Render(s)
+		// KIS API의 전일 종가 9,063.84가 표시되어야 함
+		if !strings.Contains(out, "9,063.84") {
+			t.Fatalf("expected authoritative prev close 9,063.84 in output, got:\n%s", out)
+		}
+		// 변화폭이 음수 (-23.48)로 표시되어야 함
+		if !strings.Contains(out, "-23.48") {
+			t.Fatalf("expected negative change -23.48 in output, got:\n%s", out)
+		}
+	})
+
+	t.Run("warns when saved JSON diverges from API prev close", func(t *testing.T) {
+		s := &Snapshot{
+			Price: &PriceSection{
+				Date: "20260619", Open: 9100, High: 9385, Low: 9010,
+				Close: 9040.36, PreviousClose: 9063.84,
+			},
+		}
+		prev := &SnapshotJSON{
+			Date: "20260618",
+			Price: &PriceSection{
+				Close: 8864.24, // 잘못된 값 (실제로는 6/17 종가)
+			},
+		}
+		out := Render(s, prev)
+		if !strings.Contains(out, "⚠") || !strings.Contains(out, "불일치") {
+			t.Fatalf("expected divergence warning in output, got:\n%s", out)
+		}
+		// 여전히 올바른 전일 종가를 표시해야 함
+		if !strings.Contains(out, "9,063.84") {
+			t.Fatalf("should still show authoritative prev close, got:\n%s", out)
+		}
+	})
+
+	t.Run("no warning when saved JSON matches API prev close", func(t *testing.T) {
+		s := &Snapshot{
+			Price: &PriceSection{
+				Date: "20260619", Open: 9100, High: 9385, Low: 9010,
+				Close: 9040.36, PreviousClose: 9063.84,
+			},
+		}
+		prev := &SnapshotJSON{
+			Date: "20260618",
+			Price: &PriceSection{
+				Close: 9063.84, // 올바른 값
+			},
+		}
+		out := Render(s, prev)
+		if strings.Contains(out, "불일치") {
+			t.Fatalf("should not warn when values match, got:\n%s", out)
+		}
+	})
+}
+
+func TestImpactBasisRemovedFromSection3(t *testing.T) {
+	t.Run("impact section no longer has basis fields", func(t *testing.T) {
+		s := &Snapshot{
+			Impact: &ImpactSection{
+				FuturesChangePercent: ptr(-2.5),
+				FuturesPrice:         ptr(1475.0),
+				SidecarStatus:        "not-triggered",
+			},
+			LateSession: &LateSessionSection{
+				SpotPrice:    1459.41,
+				FuturesPrice: 1473.55,
+				BasisPoint:   14.14,
+				BasisRate:    0.97,
+			},
+		}
+		out := Render(s)
+		// Section 3에 베이시스가 LateSession 참조로 표시되어야 함
+		if !strings.Contains(out, "Section 11 참조") {
+			t.Fatalf("expected Section 11 reference in impact basis, got:\n%s", out)
+		}
+		// Section 11의 올바른 베이시스 값이 표시되어야 함
+		if !strings.Contains(out, "14.1") {
+			t.Fatalf("expected correct basis from Section 11, got:\n%s", out)
+		}
+	})
+}
+
+func TestProgramTradeTotalFallback(t *testing.T) {
+	t.Run("computes total when 합계 row is missing", func(t *testing.T) {
+		// API 응답에 "합계" 행이 없는 경우
+		progResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output1": []any{
+					map[string]any{"invr_cls_name": "외국인투자자", "nabt_ntby_amt": "414900"},
+					map[string]any{"invr_cls_name": "기관합계", "nabt_ntby_amt": "-880600"},
+					map[string]any{"invr_cls_name": "개인", "nabt_ntby_amt": "563100"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp}
+		sec := &LateSessionSection{}
+		if err := fillProgramTradeToday(context.Background(), Deps{DomesticStock: stock}, sec); err != nil {
+			t.Fatal(err)
+		}
+		// 외국인 = 414900/100 = 4149
+		if sec.KOSPINetNonArbitrageForeign != 4149.0 {
+			t.Errorf("expected foreign 4149, got %.2f", sec.KOSPINetNonArbitrageForeign)
+		}
+		// 기관 = -880600/100 = -8806
+		if sec.KOSPINetNonArbitrageOrgan != -8806.0 {
+			t.Errorf("expected organ -8806, got %.2f", sec.KOSPINetNonArbitrageOrgan)
+		}
+		// Total은 fallback 합산 = 4149 + (-8806) + 5631 = 974
+		expectedTotal := 4149.0 + (-8806.0) + 5631.0
+		if sec.KOSPINetNonArbitrageTotal != expectedTotal {
+			t.Errorf("expected fallback total %.0f, got %.2f", expectedTotal, sec.KOSPINetNonArbitrageTotal)
+		}
+	})
+
+	t.Run("uses 합계 row when present", func(t *testing.T) {
+		progResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output1": []any{
+					map[string]any{"invr_cls_name": "외국인투자자", "nabt_ntby_amt": "414900"},
+					map[string]any{"invr_cls_name": "기관합계", "nabt_ntby_amt": "-880600"},
+					map[string]any{"invr_cls_name": "합계", "nabt_ntby_amt": "-100000"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp}
+		sec := &LateSessionSection{}
+		if err := fillProgramTradeToday(context.Background(), Deps{DomesticStock: stock}, sec); err != nil {
+			t.Fatal(err)
+		}
+		// Total은 API의 합계 행 값 사용 = -100000/100 = -1000
+		if sec.KOSPINetNonArbitrageTotal != -1000.0 {
+			t.Errorf("expected total -1000 from 합계 row, got %.2f", sec.KOSPINetNonArbitrageTotal)
+		}
+	})
+
+	t.Run("matches 계 row name without 합", func(t *testing.T) {
+		progResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output1": []any{
+					map[string]any{"invr_cls_name": "외국인투자자", "nabt_ntby_amt": "100000"},
+					map[string]any{"invr_cls_name": "계", "nabt_ntby_amt": "200000"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp}
+		sec := &LateSessionSection{}
+		if err := fillProgramTradeToday(context.Background(), Deps{DomesticStock: stock}, sec); err != nil {
+			t.Fatal(err)
+		}
+		if sec.KOSPINetNonArbitrageTotal != 2000.0 {
+			t.Errorf("expected total 2000 from '계' row, got %.2f", sec.KOSPINetNonArbitrageTotal)
 		}
 	})
 }
