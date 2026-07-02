@@ -3,6 +3,7 @@ package snapshot
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // VolatilitySection은 VKOSPI/VIX 변동성 지표를 담습니다.
@@ -15,6 +16,7 @@ type VolatilitySection struct {
 	DecouplingFlag bool    // 지수-VKOSPI 방향 디커플링
 	Level          string  // "정상"/"주의"/"위험"
 	Reason         string  // 부분 실패 메시지
+	Source         string  // KIS 또는 Naver
 }
 
 // collectVolatility는 VKOSPI(Naver Finance)와 VIX(Yahoo Finance)를 조회합니다.
@@ -25,7 +27,7 @@ type VolatilitySection struct {
 //   - TODO: unofficial API — 장기적으로 KRX 공식 데이터 또는 EODHD 등 대체 검토.
 //
 // VIX 소스: Yahoo Finance v8 chart API (^VIX)
-func collectVolatility(ctx context.Context, naverClient NaverFinance, yahoo YahooQuotes, indexChange float64) *VolatilitySection {
+func collectVolatility(ctx context.Context, stock DomesticStock, naverClient NaverFinance, yahoo YahooQuotes, indexChange float64) *VolatilitySection {
 	s := &VolatilitySection{}
 
 	// VIX는 VKOSPI 성공 여부와 무관하게 항상 조회
@@ -37,6 +39,44 @@ func collectVolatility(ctx context.Context, naverClient NaverFinance, yahoo Yaho
 			}
 		} else {
 			s.Reason = appendReason(s.Reason, "VIX: "+yErr.Error())
+		}
+	}
+
+	// KIS 지수 API를 우선 사용한다. Naver는 KIS가 값을 주지 못할 때만 fallback이다.
+	if stock != nil {
+		if code, resolveErr := stock.ResolveVKOSPICode(ctx, []string{"0503", "2050"}); resolveErr == nil {
+			if resp, priceErr := stock.InquireVKOSPIPrice(ctx, code); priceErr == nil {
+				if row := firstRow(resp, "output"); row != nil {
+					vk, vkOK := num(row, "bstp_nmix_prpr")
+					change, _ := num(row, "bstp_nmix_prdy_ctrt")
+					if vkOK && vk >= 5 && vk <= 100 {
+						s.VKOSPI = vk
+						s.VKOSPIChange = change
+						s.Level = vkospiLevel(vk)
+						s.DecouplingFlag = isDecoupling(indexChange, change)
+						s.Source = "KIS"
+						fromDate := time.Now().AddDate(0, 0, -14).Format("20060102")
+						if history, histErr := stock.InquireVKOSPIDailyPrice(ctx, code, fromDate); histErr == nil {
+							sum, count := 0.0, 0
+							for _, historyRow := range history {
+								if closeValue, ok := num(historyRow, "bstp_nmix_prpr", "stck_clpr"); ok && closeValue >= 5 && closeValue <= 100 {
+									sum += closeValue
+									count++
+									if count == 5 {
+										break
+									}
+								}
+							}
+							if count > 0 {
+								s.VKOSPI5DayAvg = sum / float64(count)
+							}
+						} else {
+							s.Reason = appendReason(s.Reason, "KIS VKOSPI 5d avg: "+histErr.Error())
+						}
+						return s
+					}
+				}
+			}
 		}
 	}
 
@@ -69,6 +109,7 @@ func collectVolatility(ctx context.Context, naverClient NaverFinance, yahoo Yaho
 		}
 		s.VKOSPI = vk
 		s.Level = vkospiLevel(vk)
+		s.Source = "Naver"
 		// 5일 평균
 		if len(history) >= 5 {
 			sum, count := 0.0, 0
@@ -90,6 +131,7 @@ func collectVolatility(ctx context.Context, naverClient NaverFinance, yahoo Yaho
 	s.VKOSPIChange = quote.ChangePercent
 	s.Level = vkospiLevel(vk)
 	s.DecouplingFlag = isDecoupling(indexChange, quote.ChangePercent)
+	s.Source = "Naver"
 
 	// ── VKOSPI 5거래일 평균 ───────────────────────────────────────────────────
 	history, histErr := naverClient.GetIndexDailyHistory(ctx, "VKOSPI", 10)
@@ -123,7 +165,7 @@ func vkospiLevel(v float64) string {
 // isDecoupling: 지수와 VKOSPI 방향이 다르고 VKOSPI 변동폭 > 5%
 func isDecoupling(indexChg, vkospiChg float64) bool {
 	if vkospiChg < -5 || vkospiChg > 5 {
-		return (indexChg > 0 && vkospiChg > 5) || (indexChg < 0 && vkospiChg < -5)
+		return (indexChg > 0 && vkospiChg < -5) || (indexChg < 0 && vkospiChg > 5)
 	}
 	return false
 }

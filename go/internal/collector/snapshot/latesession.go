@@ -377,11 +377,27 @@ func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection
 
 	// 5. Expiration Basis Arbitrage (EBA) 스코어 계산
 	ebaScore := 0.0
-	if isExpiration { ebaScore += 2.0 }
-	absBasis := math.Abs(sec.BasisPoint)
-	if absBasis >= 1.0 { ebaScore += 1.0 }
-	if absBasis >= 2.0 { ebaScore += 1.0 }
-	if math.Abs(sec.CloseSessionProgramNetEok) >= 300.0 { ebaScore += 1.0 }
+	if isExpiration {
+		// 만기일 캘린더 게이트 통과 후 계산
+		// 종가 동시호가 프로그램 매매 유입 필수조건 (Volume Gate)
+		if math.Abs(sec.CloseSessionProgramNetEok) >= 100.0 {
+			absBasis := math.Abs(sec.BasisPoint)
+			if absBasis >= 1.0 { ebaScore += 1.0 }
+			if absBasis >= 2.0 { ebaScore += 1.0 }
+
+			if math.Abs(sec.CloseSessionProgramNetEok) >= 300.0 {
+				ebaScore += 1.0
+			}
+			if math.Abs(sec.CloseSessionProgramNetEok) >= 500.0 {
+				ebaScore += 1.0
+			}
+
+			// 만기일 자체에 대한 기본 가중치 (베이시스나 프로그램 매매가 어느 정도 동반되어야 EBA로 인정)
+			if ebaScore > 0 {
+				ebaScore += 1.0
+			}
+		}
+	}
 
 	// 각 스코어 저장
 	sec.CapitulationScore = lscScore
@@ -410,12 +426,8 @@ func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection
 	}
 }
 
-// checkOptionExpirationDay 검증: 3, 6, 9, 12월의 둘째 목요일인지 판단
+// checkOptionExpirationDay 검증: 매월 둘째 목요일인지 판단 (선물/옵션 만기일)
 func checkOptionExpirationDay(t time.Time) bool {
-	m := t.Month()
-	if m != time.March && m != time.June && m != time.September && m != time.December {
-		return false
-	}
 	if t.Weekday() != time.Thursday {
 		return false
 	}

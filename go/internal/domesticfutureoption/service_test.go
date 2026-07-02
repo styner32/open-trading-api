@@ -107,6 +107,7 @@ var _ = Describe("Service", func() {
 		masterBody := strings.Join([]string{
 			"1|101V03|KR4101V03000|코스피200 선물 최근월| |00000000|1|201|KOSPI200",
 			"1|101V06|KR4101V06000|코스피200 선물 차근월| |00000000|2|201|KOSPI200",
+			"3|A06603|KR4306600000|코스닥150 선물 최근월| |00000000|1|3003|KSQ150",
 			"7|701V03|KR4701V03000|변동성선물 최근월| |00000000|1|2050|VKOSPI",
 		}, "\n")
 		zipBody, err := testhelpers.CreateMockZipArchive(indexFutureMasterFilename, []byte(masterBody))
@@ -128,6 +129,9 @@ var _ = Describe("Service", func() {
 		Expect(resolved.BusinessDate).To(Equal("20260312"))
 		Expect(resolved.Record.ShortCode).To(Equal("101V03"))
 		Expect(resolved.Record.MonthClassCode).To(Equal("1"))
+		kosdaqResolved, err := svc.ResolveNearMonthKOSDAQ150Futures(context.Background(), "20260312")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(kosdaqResolved.Record.ShortCode).To(Equal("A06603"))
 
 		cachePath := resolveIndexFutureMasterCachePath(baseCachePath, "20260312")
 		jsonPath := resolveIndexFutureMasterJSONPath(cachePath)

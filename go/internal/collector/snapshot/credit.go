@@ -20,6 +20,7 @@ type CreditSection struct {
 	ForcedSellAmountEok float64 `json:"forced_sell_amount_eok,omitempty"` // 실제 반대매매금액 (억원)
 	ForcedSellRatioPct  float64 `json:"forced_sell_ratio_pct,omitempty"`  // 미수금 대비 반대매매비중(%)
 	Date                string  `json:"date,omitempty"`                   // 영업일
+	KofiaDate           string  `json:"kofia_date,omitempty"`             // KOFIA 데이터 영업일
 	Reason              string  `json:"-"`
 }
 
@@ -62,6 +63,7 @@ func collectCredit(ctx context.Context, stock DomesticStock, kofiaClient KOFIACl
 			section.MarginReceivableEok = kofiaRow.MarginReceivableMln / kofiaMillionToEok
 			section.ForcedSellAmountEok = kofiaRow.ForcedSellAmountMln / kofiaMillionToEok
 			section.ForcedSellRatioPct = kofiaRow.ForcedSellRatioPct
+			section.KofiaDate = kofiaRow.Date
 		}
 	}
 

@@ -172,11 +172,6 @@ func (s *Service) ResolveVKOSPICode(ctx context.Context, candidates []string) (s
 		return envCode, nil
 	}
 
-	discoveredCode, err := discoverVKOSPICodeFromMaster(ctx, s.client)
-	if err == nil && discoveredCode != "" {
-		return discoveredCode, nil
-	}
-
 	candidates = normalizeCandidates(candidates)
 	for _, code := range candidates {
 		resp, reqErr := s.InquireIndexPrice(ctx, code)
@@ -189,6 +184,11 @@ func (s *Service) ResolveVKOSPICode(ctx context.Context, candidates []string) (s
 		if len(toRows(resp.Body["output"])) > 0 {
 			return code, nil
 		}
+	}
+
+	discoveredCode, err := discoverVKOSPICodeFromMaster(ctx, s.client)
+	if err == nil && discoveredCode != "" {
+		return discoveredCode, nil
 	}
 
 	return "", fmt.Errorf("unable to resolve VKOSPI code (set %s env var)", vkospiCodeEnvKey)

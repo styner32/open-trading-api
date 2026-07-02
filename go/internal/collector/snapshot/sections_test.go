@@ -14,13 +14,15 @@ import (
 )
 
 type fakeStock struct {
-	dailyRows []map[string]any
-	investor  *auth.RESTResponse
-	prices    map[string]*auth.RESTResponse
-	cap       *domesticstock.KOSPIMarketCapSummary
-	program   *auth.RESTResponse
-	timeFlow  *auth.RESTResponse
-	compProg  *auth.RESTResponse
+	dailyRows   []map[string]any
+	investor    *auth.RESTResponse
+	prices      map[string]*auth.RESTResponse
+	cap         *domesticstock.KOSPIMarketCapSummary
+	program     *auth.RESTResponse
+	timeFlow    *auth.RESTResponse
+	compProg    *auth.RESTResponse
+	vkospi      *auth.RESTResponse
+	vkospiDaily []map[string]any
 }
 
 func (f fakeStock) InquireIndexDailyPrice(context.Context, string, string) ([]map[string]any, error) {
@@ -49,10 +51,10 @@ func (f fakeStock) ResolveVKOSPICode(context.Context, []string) (string, error) 
 	return "2050", nil
 }
 func (f fakeStock) InquireVKOSPIPrice(context.Context, string) (*auth.RESTResponse, error) {
-	return nil, nil
+	return f.vkospi, nil
 }
 func (f fakeStock) InquireVKOSPIDailyPrice(context.Context, string, string) ([]map[string]any, error) {
-	return nil, nil
+	return f.vkospiDaily, nil
 }
 func (f fakeStock) MarketFunds(context.Context, string) (*auth.RESTResponse, error) {
 	return nil, nil
@@ -202,6 +204,29 @@ func TestGlobalKeepsPartialQuotes(t *testing.T) {
 	}
 }
 
+func TestVolatilityPrefersKISAndUsesOppositeDirectionForDecoupling(t *testing.T) {
+	stock := fakeStock{
+		vkospi: &auth.RESTResponse{Body: map[string]any{"output": map[string]any{
+			"bstp_nmix_prpr": "28.50", "bstp_nmix_prdy_ctrt": "12.30",
+		}}},
+		vkospiDaily: []map[string]any{
+			{"bstp_nmix_prpr": "28.50"}, {"bstp_nmix_prpr": "25.00"},
+			{"bstp_nmix_prpr": "24.00"}, {"bstp_nmix_prpr": "23.00"}, {"bstp_nmix_prpr": "22.00"},
+		},
+	}
+	naverClient := fakeNaver{quote: &naver.IndexQuote{Price: 99, ChangePercent: -20}}
+	got := collectVolatility(context.Background(), stock, naverClient, fakeYahoo{}, -3)
+	if got.VKOSPI != 28.5 || got.Source != "KIS" {
+		t.Fatalf("expected KIS VKOSPI 28.5, got %+v", got)
+	}
+	if !got.DecouplingFlag {
+		t.Fatalf("expected falling index and rising VKOSPI to be decoupling")
+	}
+	if isDecoupling(-3, -12.3) {
+		t.Fatalf("same-direction index/VKOSPI moves must not be decoupling")
+	}
+}
+
 func TestMacroComputesKRWMonthStartAndTNXRender(t *testing.T) {
 	tests := []struct {
 		name string
@@ -293,8 +318,8 @@ func TestLateSession(t *testing.T) {
 		}
 
 		priceSec := &PriceSection{
-			High: 100,
-			Low:  90,
+			High:  100,
+			Low:   90,
 			Close: 90.1,
 		}
 
@@ -640,6 +665,113 @@ func TestProgramTradeTotalFallback(t *testing.T) {
 		}
 		if sec.KOSPINetNonArbitrageTotal != 2000.0 {
 			t.Errorf("expected total 2000 from '계' row, got %.2f", sec.KOSPINetNonArbitrageTotal)
+		}
+	})
+}
+
+func TestEBAGatesAndStaleDatesAndMeltdownRegime(t *testing.T) {
+	t.Run("EBA calendar gate prevents trigger on non-expiration days", func(t *testing.T) {
+		progResp := &auth.RESTResponse{Body: map[string]any{"output1": []any{map[string]any{"invr_cls_name": "합계", "nabt_ntby_amt": "0"}}}}
+		compProgResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"bsop_hour": "153000", "whol_smtn_ntby_tr_pbmn": "-40000"},
+					map[string]any{"bsop_hour": "152000", "whol_smtn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp, compProg: compProgResp}
+		futures := fakeFuture{resp: &auth.RESTResponse{Body: map[string]any{"output": []any{map[string]any{"futs_prpr": "347.0"}}}}}
+		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
+		priceSec := &PriceSection{High: 100, Low: 90, Close: 95.0}
+
+		got, err := collectLateSession(context.Background(), deps, "20260702", priceSec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.PrimaryPattern == "Expiration Basis Arbitrage" {
+			t.Errorf("EBA should not trigger on a non-expiration day")
+		}
+	})
+
+	t.Run("EBA volume gate prevents trigger when program trades are small", func(t *testing.T) {
+		progResp := &auth.RESTResponse{Body: map[string]any{"output1": []any{map[string]any{"invr_cls_name": "합계", "nabt_ntby_amt": "0"}}}}
+		compProgResp := &auth.RESTResponse{
+			Body: map[string]any{
+				"output": []any{
+					map[string]any{"bsop_hour": "153000", "whol_smtn_ntby_tr_pbmn": "400"},
+					map[string]any{"bsop_hour": "152000", "whol_smtn_ntby_tr_pbmn": "0"},
+				},
+			},
+		}
+		stock := fakeStock{program: progResp, compProg: compProgResp}
+		futures := fakeFuture{resp: &auth.RESTResponse{Body: map[string]any{"output": []any{map[string]any{"futs_prpr": "347.0"}}}}}
+		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
+		priceSec := &PriceSection{High: 100, Low: 90, Close: 95.0}
+
+		got, err := collectLateSession(context.Background(), deps, "20260611", priceSec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.PrimaryPattern == "Expiration Basis Arbitrage" {
+			t.Errorf("EBA should not trigger if program trade volume is small")
+		}
+	})
+
+	t.Run("Regime and Risk index update on market crash", func(t *testing.T) {
+		price := &PriceSection{
+			Close:         7648.09,
+			PreviousClose: 8303.41, // -7.89%
+			High:          8136.28,
+			Low:           7616.33,
+		}
+		impact := &ImpactSection{
+			SidecarStatus: "triggered",
+		}
+
+		phase := classifyPhase(price, impact, nil)
+		if !strings.Contains(phase, "패닉") {
+			t.Errorf("Expected panic phase for market crash, got %q", phase)
+		}
+
+		risk := calcRiskAversionIdx(price, nil, impact, 0.64, nil)
+		if risk < 8.0 {
+			t.Errorf("Expected risk index floor to be >= 8.0 on crash day, got %.1f", risk)
+		}
+	})
+
+	t.Run("Stale date comparison displays 미갱신", func(t *testing.T) {
+		s := &Snapshot{
+			Credit: &CreditSection{
+				CreditLoanBalanceEok: 373282,
+				CustomerDepositEok:   1216340,
+				Date:                 "20260630",
+				KofiaDate:            "20260630",
+				MarginReceivableEok:  125912,
+			},
+			Concentration: &ConcentrationSection{
+				Top5Percent: 63.1,
+				Date:        "20260702",
+			},
+		}
+		prev := &SnapshotJSON{
+			Date: "20260701",
+			Credit: &CreditSection{
+				CreditLoanBalanceEok: 373282,
+				CustomerDepositEok:   1216340,
+				Date:                 "20260630",
+				KofiaDate:            "20260630",
+				MarginReceivableEok:  125912,
+			},
+			Concentration: &ConcentrationSection{
+				Top5Percent: 63.1,
+				Date:        "20260702",
+			},
+		}
+
+		out := Render(s, prev)
+		if !strings.Contains(out, "미갱신") {
+			t.Errorf("Expected '미갱신' in output for stale dates, got:\n%s", out)
 		}
 	})
 }

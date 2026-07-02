@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/collector/pulse"
 	"github.com/kis-open-api/go/internal/collector/snapshot"
 	"github.com/kis-open-api/go/internal/domesticfutureoption"
 	"github.com/kis-open-api/go/internal/domesticstock"
@@ -29,15 +32,17 @@ func main() {
 func run(args []string) error {
 	_ = godotenv.Load()
 	if len(args) < 2 || args[0] != "report" {
-		return fmt.Errorf("usage: go run ./cmd/agent report <market-snapshot|credit-balance> [args...]")
+		return fmt.Errorf("usage: go run ./cmd/agent report <market-snapshot|credit-balance|intraday-pulse> [args...]")
 	}
 	switch args[1] {
 	case "market-snapshot":
 		return runMarketSnapshot(args[2:])
 	case "credit-balance":
 		return runCreditBalance(args[2:])
+	case "intraday-pulse":
+		return runIntradayPulse(args[2:])
 	default:
-		return fmt.Errorf("unknown report type %q (supported: market-snapshot, credit-balance)", args[1])
+		return fmt.Errorf("unknown report type %q (supported: market-snapshot, credit-balance, intraday-pulse)", args[1])
 	}
 }
 
@@ -101,6 +106,66 @@ func runMarketSnapshot(args []string) error {
 			fmt.Fprintf(os.Stderr, "[snapshot] MD saved: %s\n", mdPath)
 		} else {
 			fmt.Fprintf(os.Stderr, "[snapshot] MD save failed: %v\n", err)
+		}
+	}
+	return nil
+}
+
+// runIntradayPulse는 근실시간 시장 펄스를 수집하고 출력합니다.
+func runIntradayPulse(args []string) error {
+	fs := flag.NewFlagSet("intraday-pulse", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	storeDir := fs.String("store-dir", envDefault("PULSE_OUTPUT_DIR", ".cache/pulse"), "펄스 적립 디렉터리")
+	noSave := fs.Bool("no-save", false, "적립/렌더 저장 생략 (읽기 전용)")
+	asJSON := fs.Bool("json", false, "JSON 출력")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	opts := pulse.Options{
+		StoreDir: *storeDir,
+		Lookback: 2 * time.Hour,
+		NoSave:   *noSave,
+		JSON:     *asJSON,
+	}
+
+	client, err := newKISClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if _, err := client.EnsureAuthToken(ctx); err != nil {
+		return fmt.Errorf("auth token: %w", err)
+	}
+
+	yahooClient := yahoo.NewClient(client.Client, yahoo.Config{UserAgent: os.Getenv("USER_AGENT")})
+	naverClient := naver.NewClient(client.Client, os.Getenv("USER_AGENT"))
+
+	result := pulse.Collect(ctx, pulse.Deps{
+		Stock:    domesticstock.NewService(client),
+		Future:   domesticfutureoption.NewService(client),
+		Yahoo:    yahooClient,
+		Naver:    naverClient,
+		Clock:    time.Now,
+		StoreDir: *storeDir,
+	}, opts)
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(pulse.PulseToMap(result))
+	}
+
+	output := pulse.Render(result)
+	fmt.Print(output)
+
+	// MD 저장
+	if !*noSave {
+		if err := pulse.SaveMD(opts, result.Date, output); err != nil {
+			fmt.Fprintf(os.Stderr, "[pulse] MD save failed: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "[pulse] MD saved: %s\n", pulse.MDPath(opts, result.Date))
 		}
 	}
 	return nil

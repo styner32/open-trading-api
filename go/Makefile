@@ -1,6 +1,10 @@
 CMD_DIR ?= cmd
 
-.PHONY: run build test takesnapshot creditbalance
+.PHONY: run build test takesnapshot creditbalance now
+
+now:
+	go run ./cmd/agent report intraday-pulse
+
 
 run: ## Run the app: go run
 	go run ./$(CMD_DIR)

@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -19,6 +20,9 @@ func renderVolatility(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		return
 	}
 	vkLine := fmt.Sprintf("%.2f [%s]", v.VKOSPI, v.Level)
+	if v.Source != "" {
+		vkLine += " · " + v.Source
+	}
 	if v.VKOSPIChange != 0 {
 		vkLine += fmt.Sprintf(" (전일 %s)", percent(v.VKOSPIChange))
 	}
@@ -58,10 +62,18 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		b.WriteString("- " + na(sectionErr(s, "credit")) + "\n\n")
 		return
 	}
+
+	isKISStale := p != nil && p.Credit != nil && c.Date != "" && p.Credit.Date != "" && c.Date == p.Credit.Date
+	isKOFIAStale := p != nil && p.Credit != nil && c.KofiaDate != "" && p.Credit.KofiaDate != "" && c.KofiaDate == p.Credit.KofiaDate
+
 	creditLine := trillionFromEok(c.CreditLoanBalanceEok)
 	if p != nil && p.Credit != nil && p.Credit.CreditLoanBalanceEok != 0 {
 		diff := c.CreditLoanBalanceEok - p.Credit.CreditLoanBalanceEok
-		creditLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.CreditLoanBalanceEok), eok(diff)+"억")
+		diffStr := eok(diff) + "억"
+		if isKISStale {
+			diffStr = "미갱신"
+		}
+		creditLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.CreditLoanBalanceEok), diffStr)
 	}
 	b.WriteString("- 신용융자 잔고: " + creditLine + "\n")
 
@@ -71,7 +83,11 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	}
 	if p != nil && p.Credit != nil && p.Credit.CustomerDepositEok != 0 {
 		diff := c.CustomerDepositEok - p.Credit.CustomerDepositEok
-		depositLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.CustomerDepositEok), eok(diff)+"억")
+		diffStr := eok(diff) + "억"
+		if isKISStale {
+			diffStr = "미갱신"
+		}
+		depositLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.CustomerDepositEok), diffStr)
 	}
 	b.WriteString("- 고객예탁금: " + depositLine + "\n")
 
@@ -79,7 +95,11 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		futuresLine := trillionFromEok(c.FuturesDepositEok)
 		if p != nil && p.Credit != nil && p.Credit.FuturesDepositEok != 0 {
 			diff := c.FuturesDepositEok - p.Credit.FuturesDepositEok
-			futuresLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.FuturesDepositEok), eok(diff)+"억")
+			diffStr := eok(diff) + "억"
+			if isKISStale {
+				diffStr = "미갱신"
+			}
+			futuresLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.FuturesDepositEok), diffStr)
 		}
 		b.WriteString("- 선물예수금: " + futuresLine + "\n")
 	}
@@ -90,14 +110,30 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 			marginLine := eok(c.MarginReceivableEok) + "억"
 			if p != nil && p.Credit != nil && p.Credit.MarginReceivableEok > 0 {
 				diff := c.MarginReceivableEok - p.Credit.MarginReceivableEok
-				marginLine += fmt.Sprintf("  [전일 %s억, %s억]", eok(p.Credit.MarginReceivableEok), eok(diff))
+				diffStr := eok(diff)
+				if isKOFIAStale {
+					diffStr = "미갱신"
+				}
+				if isKOFIAStale {
+					marginLine += fmt.Sprintf("  [전일 %s억, %s]", eok(p.Credit.MarginReceivableEok), diffStr)
+				} else {
+					marginLine += fmt.Sprintf("  [전일 %s억, %s억]", eok(p.Credit.MarginReceivableEok), diffStr)
+				}
 			}
 			b.WriteString("- 위탁매매 미수금: " + marginLine + "\n")
 		}
 		forcedLine := eok(c.ForcedSellAmountEok) + "억"
 		if p != nil && p.Credit != nil && p.Credit.ForcedSellAmountEok > 0 {
 			diff := c.ForcedSellAmountEok - p.Credit.ForcedSellAmountEok
-			forcedLine += fmt.Sprintf("  [전일 %s억, %s억]", eok(p.Credit.ForcedSellAmountEok), eok(diff))
+			diffStr := eok(diff)
+			if isKOFIAStale {
+				diffStr = "미갱신"
+			}
+			if isKOFIAStale {
+				forcedLine += fmt.Sprintf("  [전일 %s억, %s]", eok(p.Credit.ForcedSellAmountEok), diffStr)
+			} else {
+				forcedLine += fmt.Sprintf("  [전일 %s억, %s억]", eok(p.Credit.ForcedSellAmountEok), diffStr)
+			}
 		}
 		b.WriteString("- 실제 반대매매: " + forcedLine)
 		if c.ForcedSellRatioPct > 0 {
@@ -181,21 +217,36 @@ func renderConcentration(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		b.WriteString("- " + na(c.Reason) + "\n\n")
 		return
 	}
+
+	isStale := p != nil && p.Concentration != nil && c.Date != "" && p.Concentration.Date != "" && c.Date == p.Concentration.Date
+
 	top5Line := fmt.Sprintf("%.1f%%", c.Top5Percent)
 	top10Line := fmt.Sprintf("%.1f%%", c.Top10Percent)
 	hhiLine := fmt.Sprintf("%.0f [%s]", c.HHI, c.HHILevel)
 	if p != nil && p.Concentration != nil {
 		if p.Concentration.Top5Percent > 0 {
 			diff := c.Top5Percent - p.Concentration.Top5Percent
-			top5Line += fmt.Sprintf("  [전일 %.1f%%, %s%%p]", p.Concentration.Top5Percent, signedNumber(diff, 1))
+			diffStr := signedNumber(diff, 1) + "%p"
+			if isStale {
+				diffStr = "미갱신"
+			}
+			top5Line += fmt.Sprintf("  [전일 %.1f%%, %s]", p.Concentration.Top5Percent, diffStr)
 		}
 		if p.Concentration.Top10Percent > 0 {
 			diff := c.Top10Percent - p.Concentration.Top10Percent
-			top10Line += fmt.Sprintf("  [전일 %.1f%%, %s%%p]", p.Concentration.Top10Percent, signedNumber(diff, 1))
+			diffStr := signedNumber(diff, 1) + "%p"
+			if isStale {
+				diffStr = "미갱신"
+			}
+			top10Line += fmt.Sprintf("  [전일 %.1f%%, %s]", p.Concentration.Top10Percent, diffStr)
 		}
 		if p.Concentration.HHI > 0 {
 			diff := c.HHI - p.Concentration.HHI
-			hhiLine += fmt.Sprintf("  [전일 %.0f, %s]", p.Concentration.HHI, signedNumber(diff, 0))
+			diffStr := signedNumber(diff, 0)
+			if isStale {
+				diffStr = "미갱신"
+			}
+			hhiLine += fmt.Sprintf("  [전일 %.0f, %s]", p.Concentration.HHI, diffStr)
 		}
 	}
 	b.WriteString("- 상위 5종목 시총 비중: " + top5Line + "\n")
@@ -219,6 +270,9 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		if p != nil && p.LateSession != nil && p.LateSession.SpotPrice > 0 {
 			diffPoint := ls.BasisPoint - p.LateSession.BasisPoint
 			basisStr += fmt.Sprintf(" [전일 %.2fpt, %spt]", p.LateSession.BasisPoint, signedNumber(diffPoint, 2))
+		}
+		if math.Abs(ls.BasisPoint) >= 2.0 {
+			basisStr += " ⚠ (베이시스 괴리 과다)"
 		}
 		b.WriteString(fmt.Sprintf("- 선물-현물 베이시스: %s\n", basisStr))
 		b.WriteString(fmt.Sprintf("  - 현물(KOSPI 200): %.2f | 선물(최근월): %.2f\n", ls.SpotPrice, ls.FuturesPrice))

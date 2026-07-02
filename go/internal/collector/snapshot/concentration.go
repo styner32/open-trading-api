@@ -14,6 +14,7 @@ type ConcentrationSection struct {
 	HHILevel     string  // "비집중"/"중간 집중"/"고집중"
 	RiskLevel    string  // "🟢 보통"/"🟡 높음"/"🔴 매우 높음"
 	Reason       string
+	Date         string  `json:"date,omitempty"` // KOSPI 마스터 영업일
 }
 
 // collectConcentration은 KOSPIMarketCapSummary Constituents를 재사용합니다.
@@ -38,6 +39,7 @@ func collectConcentration(ctx context.Context, stock DomesticStock, date string)
 	s.HHI = calcHHI(summary.Constituents, summary.TotalMarketCap)
 	s.HHILevel = hhiLevel(s.HHI)
 	s.RiskLevel = concentrationRisk(summary.Constituents, s.Top5Percent)
+	s.Date = summary.BusinessDate
 	return s
 }
 

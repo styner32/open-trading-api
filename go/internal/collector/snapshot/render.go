@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -117,8 +118,11 @@ func renderImpact(b *strings.Builder, s *Snapshot) {
 	b.WriteString("- 코스피200 선물 변동률: " + quotePercent(i.FuturesChangePercent, i.FuturesReason) + "\n")
 	// 베이시스: Section 11 (LateSession)에서 KOSPI200 코드 "2001"로 정확히 계산한 값 참조
 	if s.LateSession != nil && s.LateSession.SpotPrice > 0 {
-		b.WriteString(fmt.Sprintf("- 선물-현물 베이시스: %sp (%s) — Section 11 참조\n",
-			number(s.LateSession.BasisPoint, 1), percent(s.LateSession.BasisRate)))
+		basisText := fmt.Sprintf("%sp (%s)", number(s.LateSession.BasisPoint, 1), percent(s.LateSession.BasisRate))
+		if math.Abs(s.LateSession.BasisPoint) >= 2.0 {
+			basisText += " ⚠ (베이시스 괴리 과다)"
+		}
+		b.WriteString(fmt.Sprintf("- 선물-현물 베이시스: %s — Section 11 참조\n", basisText))
 	} else {
 		b.WriteString("- 선물-현물 베이시스: Section 11 참조\n")
 	}

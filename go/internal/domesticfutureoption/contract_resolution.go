@@ -41,6 +41,27 @@ func (s *Service) ResolveNearMonthKOSPI200Futures(ctx context.Context, businessD
 	}, nil
 }
 
+// ResolveNearMonthKOSDAQ150Futures resolves the recent-month KOSDAQ150 contract
+// from the same business-date-scoped index futures master cache.
+func (s *Service) ResolveNearMonthKOSDAQ150Futures(ctx context.Context, businessDate string) (*ResolvedContract, error) {
+	records, err := s.LoadIndexFutureMaster(ctx, businessDate)
+	if err != nil {
+		return nil, err
+	}
+	record, err := selectNearMonthKOSDAQ150Future(records)
+	if err != nil {
+		return nil, err
+	}
+	cachePath := resolveIndexFutureMasterCachePath(getOrDefaultEnv(indexFutureMasterCacheEnvKey, defaultIndexFutureMasterCache), businessDate)
+	return &ResolvedContract{
+		BusinessDate:    normalizeBusinessDate(businessDate),
+		Source:          "master",
+		MasterCachePath: cachePath,
+		MasterJSONPath:  resolveIndexFutureMasterJSONPath(cachePath),
+		Record:          record,
+	}, nil
+}
+
 func selectNearMonthKOSPI200Future(records []MasterRecord) (MasterRecord, error) {
 	candidates := make([]MasterRecord, 0, len(records))
 	for _, record := range records {
@@ -69,6 +90,26 @@ func selectNearMonthKOSPI200Future(records []MasterRecord) (MasterRecord, error)
 		return candidates[i].ShortCode < candidates[j].ShortCode
 	})
 
+	return candidates[0], nil
+}
+
+func selectNearMonthKOSDAQ150Future(records []MasterRecord) (MasterRecord, error) {
+	candidates := make([]MasterRecord, 0, len(records))
+	for _, record := range records {
+		underlying := strings.TrimSpace(record.UnderlyingShortCode)
+		if record.ShortCode != "" && strings.TrimSpace(record.InfoType) == "3" && underlying == "3003" {
+			candidates = append(candidates, record)
+		}
+	}
+	if len(candidates) == 0 {
+		return MasterRecord{}, errors.New("unable to find KOSDAQ150 index futures contract in master file")
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].MonthClassCode != candidates[j].MonthClassCode {
+			return candidates[i].MonthClassCode < candidates[j].MonthClassCode
+		}
+		return candidates[i].ShortCode < candidates[j].ShortCode
+	})
 	return candidates[0], nil
 }
 
