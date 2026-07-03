@@ -320,13 +320,13 @@ func buildMarketSafety(kospi, kosdaq IndexLevel, k200, kq150 IndexFutureSnapshot
 }
 
 func downsideGap(changePct, threshold float64) (float64, bool) {
-	drop := math.Max(0, -changePct)
-	gap := threshold - drop
+	gap := changePct + threshold
 	if gap <= 0 {
 		return 0, true
 	}
 	return gap, false
 }
+
 
 func buildSidecar(market string, f IndexFutureSnapshot, futuresThreshold, spotThreshold float64) SidecarStatus {
 	direction := "보합"

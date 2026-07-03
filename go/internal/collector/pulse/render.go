@@ -297,9 +297,9 @@ func renderWindowLine(b *strings.Builder, label string, w Window) {
 		lastStr = fmt.Sprintf("  @%s", w.LastTS.In(kstLocation).Format("15:04"))
 	}
 
-	b.WriteString(fmt.Sprintf("%-20s  %10.4f  전일 %s%%   1h %s  2h %s%s\n",
+	b.WriteString(fmt.Sprintf("%-20s  %10.4f  전일 %s%s%%   1h %s  2h %s%s\n",
 		label, w.Current,
-		fmt.Sprintf("%.2f", w.ChangePct),
+		arrowNeutral(w.ChangePct), fmt.Sprintf("%.2f", w.ChangePct),
 		move1h, move2h,
 		lastStr,
 	))

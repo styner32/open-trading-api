@@ -97,6 +97,14 @@ var _ = Describe("market structure collectors", func() {
 		Expect(phase1.CurrentGapPct).To(BeNumerically("~", 2.47, 0.01))
 		Expect(phase1.LowGapPct).To(BeNumerically("~", 1.02, 0.02))
 		Expect(phase1.LowReached).To(BeFalse())
+
+		// 상승 시 시나리오 (+5.17% 일 때 -8% 임계까지의 거리는 13.17%p)
+		idxPositive := IndexLevel{PrevClose: 1000.0, Price: 1051.7, Low: 1020.0, ChangePct: 5.17, OK: true}
+		safetyPos := buildMarketSafety(idxPositive, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{})
+		Expect(safetyPos.CircuitBreakers).To(HaveLen(1))
+		phase1Pos := safetyPos.CircuitBreakers[0].Levels[0]
+		Expect(phase1Pos.CurrentGapPct).To(BeNumerically("~", 13.17, 0.01))
+		Expect(phase1Pos.LowGapPct).To(BeNumerically("~", 10.00, 0.01))
 	})
 
 	It("KOSDAQ 사이드카는 선물과 현물 조건을 같은 방향으로 모두 요구", func() {
@@ -153,17 +161,21 @@ var _ = Describe("flow rates", func() {
 
 	It("렌더가 거래대금 화살표를 제거하고 no-save 경로와 미국채 bp를 표시", func() {
 		move1h := 0.25
+		usdkrwMove := -0.17
 		p := &Pulse{
 			Now: time.Date(2026, 7, 2, 13, 40, 0, 0, kstLocation), Date: "20260702",
 			StoreDir: "/tmp/custom-pulse",
 			KOSPI:    Market{Name: "KOSPI", Index: IndexLevel{Price: 100, PrevClose: 105, ChangePct: -4.76, TradingValue: 12000, OK: true}},
 			KOSDAQ:   Market{Name: "KOSDAQ"},
+			USDKRW:   Window{Symbol: "KRW=X", Label: "원/달러", Current: 1548.13, ChangePct: -0.17, Move1hPct: &usdkrwMove, OK: true},
 			Macro:    []Window{{Symbol: "^TNX", Label: "미국채10Y", Current: 4.5, ChangePct: 1, Move1hPct: &move1h, OK: true}},
 			Errors:   map[string]string{},
 		}
 		out := Render(p)
 		Expect(out).To(ContainSubstring("거래대금 1.20조"))
 		Expect(out).NotTo(ContainSubstring("거래대금 ▲"))
+		Expect(out).To(ContainSubstring("원/달러"))
+		Expect(out).To(ContainSubstring("전일 ▼-0.17%"))
 		Expect(out).To(ContainSubstring("미국채10Y"))
 		Expect(out).To(ContainSubstring("bp"))
 		Expect(out).To(ContainSubstring("저장 안 함 · 대상 경로 /tmp/custom-pulse/pulse_20260702.jsonl"))
