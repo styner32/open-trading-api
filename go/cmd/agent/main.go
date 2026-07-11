@@ -61,8 +61,7 @@ func runMarketSnapshot(args []string) error {
 		return fmt.Errorf("auth token: %w", err)
 	}
 
-	yahooClient := yahoo.NewClient(client.Client, yahoo.Config{UserAgent: os.Getenv("USER_AGENT")})
-	naverClient := naver.NewClient(client.Client, os.Getenv("USER_AGENT"))
+	yahooClient, naverClient := newExternalClients(client)
 	kofiaClient := kofia.NewCachedClient(envDefault("KOFIA_CACHE_DIR", ".cache"), os.Getenv("USER_AGENT"))
 	result := snapshot.Collect(ctx, snapshot.Deps{
 		DomesticStock:  domesticstock.NewService(client),
@@ -139,8 +138,7 @@ func runIntradayPulse(args []string) error {
 		return fmt.Errorf("auth token: %w", err)
 	}
 
-	yahooClient := yahoo.NewClient(client.Client, yahoo.Config{UserAgent: os.Getenv("USER_AGENT")})
-	naverClient := naver.NewClient(client.Client, os.Getenv("USER_AGENT"))
+	yahooClient, naverClient := newExternalClients(client)
 
 	result := pulse.Collect(ctx, pulse.Deps{
 		Stock:    domesticstock.NewService(client),
@@ -180,4 +178,10 @@ func newKISClient() (*auth.KIClient, error) {
 	client.Client = &http.Client{Timeout: 15 * time.Second}
 	client.SetTokenCachePath(envDefault("AUTH_TOKEN_FILE", ".auth_token.json"))
 	return client, nil
+}
+func newExternalClients(client *auth.KIClient) (*yahoo.Client, *naver.Client) {
+	ua := os.Getenv("USER_AGENT")
+	yahooClient := yahoo.NewClient(client.Client, yahoo.Config{UserAgent: ua})
+	naverClient := naver.NewClient(client.Client, ua)
+	return yahooClient, naverClient
 }

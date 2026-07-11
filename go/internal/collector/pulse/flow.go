@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/parse"
 )
 
 type flowStock interface {
@@ -21,13 +22,13 @@ func collectFlow(ctx context.Context, stock flowStock, marketDiv, indexDiv strin
 		return FlowSnapshot{}, fmt.Errorf("inquire-investor-time-by-market (%s): %w", marketDiv, err)
 	}
 
-	row := firstRowOf(resp, "output")
+	row := resp.FirstRow("output")
 	if row == nil {
 		return FlowSnapshot{}, fmt.Errorf("inquire-investor-time-by-market (%s): output 행 없음", marketDiv)
 	}
 
 	get := func(key string) float64 {
-		v, _ := numOf(row, key)
+		v, _ := parse.Num(row, key)
 		return v / millionToEok // 백만원 → 억원
 	}
 

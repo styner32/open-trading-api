@@ -1,27 +1,26 @@
 package domesticfutureoption
 
 import (
-	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/kis-open-api/go/internal/envcfg"
+	"github.com/kis-open-api/go/internal/mstcache"
 	"golang.org/x/text/encoding/korean"
 	"golang.org/x/text/transform"
 )
 
 func (s *Service) LoadIndexFutureMaster(ctx context.Context, businessDate string) ([]MasterRecord, error) {
-	cachePath := resolveIndexFutureMasterCachePath(getOrDefaultEnv(indexFutureMasterCacheEnvKey, defaultIndexFutureMasterCache), businessDate)
-	if err := s.ensureIndexFutureMasterCache(ctx, cachePath); err != nil {
+	cachePath := resolveIndexFutureMasterCachePath(envcfg.Get(indexFutureMasterCacheEnvKey, defaultIndexFutureMasterCache), businessDate)
+	err := mstcache.EnsureZipCache(ctx, s.client, indexFutureMasterDownloadURL, indexFutureMasterFilename, cachePath)
+	if err != nil {
 		return nil, err
 	}
 
@@ -35,60 +34,30 @@ func (s *Service) LoadIndexFutureMaster(ctx context.Context, businessDate string
 		return nil, err
 	}
 
-	if err := ensureIndexFutureMasterJSONCache(cachePath, businessDate, records); err != nil {
+	jsonPath := resolveIndexFutureMasterJSONPath(cachePath)
+	err = mstcache.EnsureJSONSidecar(cachePath, jsonPath, func() (any, error) {
+		return masterJSONCache{
+			BusinessDate: normalizeBusinessDate(businessDate),
+			GeneratedAt:  time.Now().Format(time.RFC3339),
+			SourcePath:   cachePath,
+			RecordCount:  len(records),
+			Fields: []masterJSONField{
+				{Name: "info_type", Description: "1=지수선물, 5=지수콜옵션, 6=지수풋옵션 등"},
+				{Name: "short_code", Description: "단축 종목코드"},
+				{Name: "standard_code", Description: "표준 종목코드"},
+				{Name: "name", Description: "한글 종목명"},
+				{Name: "month_class_code", Description: "1=최근월물, 2=차근월물"},
+				{Name: "underlying_short_code", Description: "기초자산 단축코드"},
+				{Name: "underlying_name", Description: "기초자산명"},
+			},
+			Records: records,
+		}, nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
 	return records, nil
-}
-
-func (s *Service) ensureIndexFutureMasterCache(ctx context.Context, cachePath string) error {
-	_, err := os.Stat(cachePath)
-	if err == nil {
-		return nil
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to stat index future master cache: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexFutureMasterDownloadURL, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to download index future master zip: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("index future master download failed (status %d)", resp.StatusCode)
-	}
-
-	zipBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	masterBytes, err := unzipSingleFile(zipBytes, indexFutureMasterFilename)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
-		return fmt.Errorf("failed to create index future master cache dir: %w", err)
-	}
-
-	tmpPath := cachePath + ".tmp"
-	if err := os.WriteFile(tmpPath, masterBytes, 0o644); err != nil {
-		return fmt.Errorf("failed to write index future master temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, cachePath); err != nil {
-		return fmt.Errorf("failed to replace index future master cache: %w", err)
-	}
-
-	return nil
 }
 
 func parseIndexFutureMaster(raw []byte) ([]MasterRecord, error) {
@@ -186,85 +155,4 @@ func normalizeBusinessDate(value string) string {
 	return value
 }
 
-func ensureIndexFutureMasterJSONCache(cachePath string, businessDate string, records []MasterRecord) error {
-	jsonPath := resolveIndexFutureMasterJSONPath(cachePath)
 
-	masterInfo, err := os.Stat(cachePath)
-	if err != nil {
-		return fmt.Errorf("failed to stat index future master cache for json export: %w", err)
-	}
-
-	if jsonInfo, err := os.Stat(jsonPath); err == nil && !masterInfo.ModTime().After(jsonInfo.ModTime()) {
-		return nil
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to stat index future master json cache: %w", err)
-	}
-
-	payload := masterJSONCache{
-		BusinessDate: normalizeBusinessDate(businessDate),
-		GeneratedAt:  time.Now().Format(time.RFC3339),
-		SourcePath:   cachePath,
-		RecordCount:  len(records),
-		Fields: []masterJSONField{
-			{Name: "info_type", Description: "1=지수선물, 5=지수콜옵션, 6=지수풋옵션 등"},
-			{Name: "short_code", Description: "단축 종목코드"},
-			{Name: "standard_code", Description: "표준 종목코드"},
-			{Name: "name", Description: "한글 종목명"},
-			{Name: "month_class_code", Description: "1=최근월물, 2=차근월물"},
-			{Name: "underlying_short_code", Description: "기초자산 단축코드"},
-			{Name: "underlying_name", Description: "기초자산명"},
-		},
-		Records: records,
-	}
-
-	raw, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal index future master json cache: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
-		return fmt.Errorf("failed to create index future master json dir: %w", err)
-	}
-
-	tmpPath := jsonPath + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, 0o644); err != nil {
-		return fmt.Errorf("failed to write index future master json temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, jsonPath); err != nil {
-		return fmt.Errorf("failed to replace index future master json cache: %w", err)
-	}
-
-	return nil
-}
-
-func unzipSingleFile(zipBytes []byte, targetName string) ([]byte, error) {
-	readerAt := bytes.NewReader(zipBytes)
-	zipReader, err := zip.NewReader(readerAt, int64(len(zipBytes)))
-	if err != nil {
-		return nil, err
-	}
-
-	for _, file := range zipReader.File {
-		if !strings.EqualFold(file.Name, targetName) {
-			continue
-		}
-
-		fileReader, err := file.Open()
-		if err != nil {
-			return nil, err
-		}
-		defer fileReader.Close()
-
-		return io.ReadAll(fileReader)
-	}
-
-	return nil, fmt.Errorf("%s not found in zip archive", targetName)
-}
-
-func getOrDefaultEnv(key string, defaultValue string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue
-	}
-	return value
-}

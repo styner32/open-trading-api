@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/kis-open-api/go/internal/format"
 )
 
 const kstLayout = "2006-01-02 15:04 KST"
@@ -373,3 +375,15 @@ func PulseToMap(p *Pulse) map[string]any {
 		"errors":              p.Errors,
 	}
 }
+
+func fmtPct(v float64) string { return format.Percent(v) }
+func fmtPctPtr(v *float64) string {
+	if v == nil {
+		return "N/A"
+	}
+	return format.Percent(*v)
+}
+func fmtEok(v float64) string { return format.EokArrow(v) }
+func fmtAmountEok(v float64) string { return format.AmountEok(v) }
+func arrowNeutral(v float64) string { return format.ArrowNeutral(v) }
+

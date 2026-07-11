@@ -3,6 +3,8 @@ package pulse
 import (
 	"fmt"
 	"math"
+
+	"github.com/kis-open-api/go/internal/format"
 )
 
 // Analyze는 Pulse에서 결정적(rule-based) 한국어 분석 불릿 목록을 생성합니다.
@@ -40,11 +42,11 @@ func analyzeIndexMomentum(p *Pulse) []string {
 	v := *m1h
 	switch {
 	case v <= -0.5:
-		out = append(out, fmt.Sprintf("코스피 최근 1h %s 하방 모멘텀 우위", fmtPct(v)))
+		out = append(out, fmt.Sprintf("코스피 최근 1h %s 하방 모멘텀 우위", format.Percent(v)))
 	case v >= 0.5:
-		out = append(out, fmt.Sprintf("코스피 최근 1h %s 반등 시도", fmtPct(v)))
+		out = append(out, fmt.Sprintf("코스피 최근 1h %s 반등 시도", format.Percent(v)))
 	default:
-		out = append(out, fmt.Sprintf("코스피 최근 1h %s 횡보", fmtPct(v)))
+		out = append(out, fmt.Sprintf("코스피 최근 1h %s 횡보", format.Percent(v)))
 	}
 	return out
 }
@@ -70,18 +72,18 @@ func analyzeFlowLeader(p *Pulse) []string {
 		switch name {
 		case "외국인":
 			if p.KOSPI.Flow.OK {
-				cumStr = fmt.Sprintf(" (누적 %s)", fmtEok(p.KOSPI.Flow.Foreign))
+				cumStr = fmt.Sprintf(" (누적 %s)", format.EokArrow(p.KOSPI.Flow.Foreign))
 			}
 		case "기관":
 			if p.KOSPI.Flow.OK {
-				cumStr = fmt.Sprintf(" (누적 %s)", fmtEok(p.KOSPI.Flow.Institution))
+				cumStr = fmt.Sprintf(" (누적 %s)", format.EokArrow(p.KOSPI.Flow.Institution))
 			}
 		case "개인":
 			if p.KOSPI.Flow.OK {
-				cumStr = fmt.Sprintf(" (누적 %s)", fmtEok(p.KOSPI.Flow.Individual))
+				cumStr = fmt.Sprintf(" (누적 %s)", format.EokArrow(p.KOSPI.Flow.Individual))
 			}
 		}
-		out = append(out, fmt.Sprintf("KOSPI %s 최근 %s %s %s%s%s", name, elapsedLabel(d1h.Elapsed), fmtEok(v1h), flowDirection(v1h), accStr, cumStr))
+		out = append(out, fmt.Sprintf("KOSPI %s 최근 %s %s %s%s%s", name, elapsedLabel(d1h.Elapsed), format.EokArrow(v1h), flowDirection(v1h), accStr, cumStr))
 	}
 
 	check("외국인", d1h.Foreign, func(d *FlowDelta) float64 { return d.Foreign })
@@ -102,9 +104,9 @@ func analyzeForexLink(p *Pulse) []string {
 	usdkrwRise := p.USDKRW.Move1hPct != nil && *p.USDKRW.Move1hPct > 0
 
 	if foreignSelling && usdkrwRise {
-		out = append(out, fmt.Sprintf("원화 약세(원/달러 1h %s) 동반 외국인 이탈 → 환차손 회피성 매도 가능성", fmtPct(*p.USDKRW.Move1hPct)))
+		out = append(out, fmt.Sprintf("원화 약세(원/달러 1h %s) 동반 외국인 이탈 → 환차손 회피성 매도 가능성", format.Percent(*p.USDKRW.Move1hPct)))
 	} else if !usdkrwRise && p.USDKRW.Move1hPct != nil {
-		out = append(out, fmt.Sprintf("원/달러 1h %s (원화 강보합) → 환율發 압력 제한적", fmtPct(*p.USDKRW.Move1hPct)))
+		out = append(out, fmt.Sprintf("원/달러 1h %s (원화 강보합) → 환율發 압력 제한적", format.Percent(*p.USDKRW.Move1hPct)))
 	}
 	return out
 }
@@ -127,11 +129,11 @@ func analyzeFuturesSync(p *Pulse) []string {
 	ksp1h := *kospi1h
 
 	if sign(nq1h) == sign(ksp1h) {
-		out = append(out, fmt.Sprintf("나스닥선물 1h %s — 코스피와 동조", fmtPct(nq1h)))
+		out = append(out, fmt.Sprintf("나스닥선물 1h %s — 코스피와 동조", format.Percent(nq1h)))
 	} else {
 		out = append(out, fmt.Sprintf(
 			"디커플링: 나스닥선물 1h %s vs 코스피 1h %s — 갭 메우기 여지",
-			fmtPct(nq1h), fmtPct(ksp1h),
+			format.Percent(nq1h), format.Percent(ksp1h),
 		))
 	}
 	return out
@@ -148,9 +150,9 @@ func analyzeMacroSignals(p *Pulse) []string {
 		switch w.Symbol {
 		case "^TNX":
 			if v >= 1.5 {
-				out = append(out, fmt.Sprintf("미국채10Y 1h %s 급등 → 금리 상승이 위험자산 부담", fmtPct(v)))
+				out = append(out, fmt.Sprintf("미국채10Y 1h %s 급등 → 금리 상승이 위험자산 부담", format.Percent(v)))
 			} else if v <= -1.5 {
-				out = append(out, fmt.Sprintf("미국채10Y 1h %s 하락 → 금리 하락, 위험자산 긍정적", fmtPct(v)))
+				out = append(out, fmt.Sprintf("미국채10Y 1h %s 하락 → 금리 하락, 위험자산 긍정적", format.Percent(v)))
 			}
 		case "CL=F":
 			if math.Abs(v) >= 1.5 {
@@ -158,7 +160,7 @@ func analyzeMacroSignals(p *Pulse) []string {
 				if v < 0 {
 					dir = "급락"
 				}
-				out = append(out, fmt.Sprintf("WTI원유 1h %s %s → 에너지·인플레이션 주의", fmtPct(v), dir))
+				out = append(out, fmt.Sprintf("WTI원유 1h %s %s → 에너지·인플레이션 주의", format.Percent(v), dir))
 			}
 		}
 	}

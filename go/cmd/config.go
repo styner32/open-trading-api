@@ -1,13 +1,12 @@
 package main
 
 import (
-	"log"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kis-open-api/go/internal/commodityfuture"
+	"github.com/kis-open-api/go/internal/envcfg"
 	"github.com/kis-open-api/go/internal/shippingindex"
 )
 
@@ -151,60 +150,21 @@ func newAppDates(now time.Time) appDates {
 }
 
 func getOrDefault(key string, defaultValue string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-	return value
+	return envcfg.Get(key, defaultValue)
 }
 
 func getFloatOrDefault(key string, defaultValue float64) float64 {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue
-	}
-
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		log.Fatalf("%s must be a float: %v", key, err)
-	}
-	return parsed
+	return envcfg.Float(key, defaultValue)
 }
 
 func getIntOrDefault(key string, defaultValue int) int {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue
-	}
-
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		log.Fatalf("%s must be an integer: %v", key, err)
-	}
-	return parsed
+	return envcfg.Int(key, defaultValue)
 }
 
 func getBoolOrDefault(key string, defaultValue bool) bool {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue
-	}
-
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		log.Fatalf("%s must be a boolean: %v", key, err)
-	}
-	return parsed
+	return envcfg.Bool(key, defaultValue)
 }
 
 func getOptionalFloat(key string) *float64 {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return nil
-	}
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		log.Fatalf("%s must be a float: %v", key, err)
-	}
-	return &parsed
+	return envcfg.OptionalFloat(key)
 }

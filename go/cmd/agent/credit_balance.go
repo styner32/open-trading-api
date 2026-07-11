@@ -13,6 +13,7 @@ import (
 
 	"github.com/kis-open-api/go/internal/auth"
 	"github.com/kis-open-api/go/internal/domesticstock"
+	"github.com/kis-open-api/go/internal/parse"
 )
 
 // CreditBalanceReport is the per-stock credit balance JSON output.
@@ -254,60 +255,26 @@ func printCreditTable(reports []CreditBalanceReport) {
 // helpers
 
 func firstOutputMap(resp *auth.RESTResponse, key string) map[string]any {
-	if resp == nil || resp.Body == nil {
-		return nil
-	}
-	switch v := resp.Body[key].(type) {
-	case map[string]any:
-		return v
-	case []any:
-		if len(v) > 0 {
-			if m, ok := v[0].(map[string]any); ok {
-				return m
-			}
-		}
-	}
-	return nil
+	return resp.FirstRow(key)
 }
 
 func outputArray(resp *auth.RESTResponse, key string) []map[string]any {
-	if resp == nil || resp.Body == nil {
-		return nil
-	}
-	arr, ok := resp.Body[key].([]any)
-	if !ok {
-		return nil
-	}
-	var result []map[string]any
-	for _, item := range arr {
-		if m, ok := item.(map[string]any); ok {
-			result = append(result, m)
-		}
-	}
-	return result
+	return resp.Rows(key)
 }
 
 func strVal(m map[string]any, key string) string {
-	if m == nil {
+	if m == nil || m[key] == nil {
 		return ""
 	}
-	v, _ := m[key].(string)
-	return strings.TrimSpace(v)
+	return strings.TrimSpace(parse.String(m[key]))
 }
 
 func intVal(m map[string]any, key string) int64 {
-	if m == nil {
+	v, ok := parse.Num(m, key)
+	if !ok {
 		return 0
 	}
-	switch v := m[key].(type) {
-	case float64:
-		return int64(v)
-	case string:
-		s := strings.TrimSpace(strings.ReplaceAll(v, ",", ""))
-		n, _ := strconv.ParseInt(s, 10, 64)
-		return n
-	}
-	return 0
+	return int64(v)
 }
 
 func formatInt(v int64) string {

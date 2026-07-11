@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kis-open-api/go/internal/fileio"
 )
 
 func (s *Service) resolveSECTicker(ctx context.Context, symbol string) (string, string, error) {
@@ -86,30 +87,11 @@ func isSECFairAccessBody(raw []byte) bool {
 }
 
 func readCacheFile(path string) ([]byte, bool) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil, false
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil || len(raw) == 0 {
-		return nil, false
-	}
-	return raw, true
+	return fileio.ReadCacheFile(path)
 }
 
 func writeCacheFile(path string, raw []byte) {
-	path = strings.TrimSpace(path)
-	if path == "" || len(raw) == 0 {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, 0o600); err != nil {
-		return
-	}
-	_ = os.Rename(tmpPath, path)
+	fileio.WriteCacheFile(path, raw)
 }
 
 func resolveCompanyFactsCachePath(basePath string, cik string) string {

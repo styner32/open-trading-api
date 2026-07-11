@@ -11,6 +11,7 @@ import (
 
 	"github.com/kis-open-api/go/internal/auth"
 	"github.com/kis-open-api/go/internal/domesticstock"
+	"github.com/kis-open-api/go/internal/parse"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -37,7 +38,7 @@ func resolveBusinessDate(ctx context.Context, stock marketTimeStock, fallback st
 	if err != nil {
 		return fallback, err
 	}
-	row := firstRowOf(resp, "output1")
+	row := resp.FirstRow("output1")
 	if row == nil {
 		return fallback, fmt.Errorf("market-time output1 행 없음")
 	}
@@ -89,7 +90,7 @@ func collectProgramTrade(ctx context.Context, stock programTradeStock, marketCla
 	if err != nil {
 		return ProgramTradeSnapshot{}, err
 	}
-	rows := rowsOf(resp, "output")
+	rows := resp.Rows("output")
 	if len(rows) == 0 {
 		return ProgramTradeSnapshot{}, fmt.Errorf("comp-program-trade-today (%s): output 행 없음", marketClass)
 	}
@@ -103,7 +104,7 @@ func collectProgramTrade(ctx context.Context, stock programTradeStock, marketCla
 		}
 	}
 	get := func(key string) (float64, error) {
-		v, ok := numOf(latest, key)
+		v, ok := parse.Num(latest, key)
 		if !ok {
 			return 0, fmt.Errorf("%s 필드 없음", key)
 		}
@@ -154,24 +155,24 @@ func collectIndexFuture(ctx context.Context, future DomesticFuture, businessDate
 	if err != nil {
 		return IndexFutureSnapshot{}, err
 	}
-	futureRow := firstRowOf(resp, "output1", "output")
-	spotRow := firstRowOf(resp, "output3")
+	futureRow := resp.FirstRow("output1", "output")
+	spotRow := resp.FirstRow("output3")
 	if futureRow == nil || spotRow == nil {
 		return IndexFutureSnapshot{}, fmt.Errorf("index future %s: output1/output3 행 없음", code)
 	}
-	price, ok := numOf(futureRow, "futs_prpr")
+	price, ok := parse.Num(futureRow, "futs_prpr")
 	if !ok {
 		return IndexFutureSnapshot{}, fmt.Errorf("index future %s: futs_prpr 없음", code)
 	}
-	prevClose, _ := numOf(futureRow, "futs_prdy_clpr", "futs_sdpr")
-	changePct, _ := numOf(futureRow, "futs_prdy_ctrt")
-	spotPrice, ok := numOf(spotRow, "bstp_nmix_prpr")
+	prevClose, _ := parse.Num(futureRow, "futs_prdy_clpr", "futs_sdpr")
+	changePct, _ := parse.Num(futureRow, "futs_prdy_ctrt")
+	spotPrice, ok := parse.Num(spotRow, "bstp_nmix_prpr")
 	if !ok {
 		return IndexFutureSnapshot{}, fmt.Errorf("index future %s: output3 spot 없음", code)
 	}
-	spotChangePct, _ := numOf(spotRow, "bstp_nmix_prdy_ctrt")
+	spotChangePct, _ := parse.Num(spotRow, "bstp_nmix_prdy_ctrt")
 	computedBasis := price - spotPrice
-	marketBasis, marketBasisOK := numOf(futureRow, "mrkt_basis")
+	marketBasis, marketBasisOK := parse.Num(futureRow, "mrkt_basis")
 	basisMatch := !marketBasisOK || math.Abs(computedBasis-marketBasis) <= 0.05
 	return IndexFutureSnapshot{
 		Code: code, Name: name, Price: price, PrevClose: prevClose, ChangePct: changePct,
@@ -185,9 +186,9 @@ func collectVKOSPI(ctx context.Context, stock vkospiStock, naverClient NaverFina
 	for _, code := range []string{"0503", "2050"} {
 		resp, err := stock.InquireVKOSPIPrice(ctx, code)
 		if err == nil {
-			if row := firstRowOf(resp, "output"); row != nil {
-				value, valueOK := numOf(row, "bstp_nmix_prpr")
-				change, _ := numOf(row, "bstp_nmix_prdy_ctrt")
+			if row := resp.FirstRow("output"); row != nil {
+				value, valueOK := parse.Num(row, "bstp_nmix_prpr")
+				change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
 				if valueOK && value >= 5 && value <= 100 {
 					return VolatilitySnapshot{Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true}, nil
 				}
@@ -200,9 +201,9 @@ func collectVKOSPI(ctx context.Context, stock vkospiStock, naverClient NaverFina
 	if resolveErr == nil && code != "0503" && code != "2050" {
 		resp, err := stock.InquireVKOSPIPrice(ctx, code)
 		if err == nil {
-			if row := firstRowOf(resp, "output"); row != nil {
-				value, valueOK := numOf(row, "bstp_nmix_prpr")
-				change, _ := numOf(row, "bstp_nmix_prdy_ctrt")
+			if row := resp.FirstRow("output"); row != nil {
+				value, valueOK := parse.Num(row, "bstp_nmix_prpr")
+				change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
 				if valueOK && value >= 5 && value <= 100 {
 					return VolatilitySnapshot{Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true}, nil
 				}
@@ -256,8 +257,8 @@ func collectContributions(ctx context.Context, stock contributionStock, business
 				mu.Unlock()
 				return nil
 			}
-			row := firstRowOf(resp, "output")
-			changePct, ok := numOf(row, "prdy_ctrt")
+			row := resp.FirstRow("output")
+			changePct, ok := parse.Num(row, "prdy_ctrt")
 			if row == nil || !ok {
 				mu.Lock()
 				failures = append(failures, item.Code)

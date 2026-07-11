@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,11 +14,12 @@ import (
 	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/envcfg"
+	"github.com/kis-open-api/go/internal/parse"
 )
 
 const (
@@ -476,24 +476,11 @@ func (p *requestPacer) Wait(ctx context.Context) (time.Duration, error) {
 }
 
 func getEnvInt(key string, defaultValue int) int {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue
-	}
-
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return defaultValue
-	}
-	return parsed
+	return envcfg.Int(key, defaultValue)
 }
 
 func getOrDefaultEnv(key string, defaultValue string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue
-	}
-	return value
+	return envcfg.Get(key, defaultValue)
 }
 
 func actualPBRDebugEnabled() bool {
@@ -533,39 +520,11 @@ func actualPBRLog(enabled bool, format string, args ...any) {
 }
 
 func parseFloat(value any) (float64, bool) {
-	switch typed := value.(type) {
-	case float64:
-		return typed, true
-	case float32:
-		return float64(typed), true
-	case int:
-		return float64(typed), true
-	case int64:
-		return float64(typed), true
-	case int32:
-		return float64(typed), true
-	case json.Number:
-		parsed, err := typed.Float64()
-		return parsed, err == nil
-	case string:
-		clean := strings.ReplaceAll(strings.TrimSpace(typed), ",", "")
-		if clean == "" {
-			return 0, false
-		}
-		parsed, err := strconv.ParseFloat(clean, 64)
-		return parsed, err == nil
-	default:
-		return 0, false
-	}
+	return parse.Float(value)
 }
 
 func toString(value any) string {
-	switch typed := value.(type) {
-	case string:
-		return typed
-	default:
-		return fmt.Sprintf("%v", value)
-	}
+	return parse.String(value)
 }
 
 func isYYYYMMDD(value string) bool {

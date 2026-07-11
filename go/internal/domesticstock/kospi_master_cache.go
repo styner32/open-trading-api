@@ -1,20 +1,17 @@
 package domesticstock
 
 import (
-	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/kis-open-api/go/internal/mstcache"
 	"golang.org/x/text/encoding/korean"
 	"golang.org/x/text/transform"
 )
@@ -26,7 +23,8 @@ func (s *Service) loadKOSPIMaster(ctx context.Context, businessDate string) ([]k
 	}
 	cachePath = resolveKOSPIMasterCachePath(cachePath, businessDate)
 
-	if err := s.ensureKOSPIMasterCache(ctx, cachePath); err != nil {
+	err := mstcache.EnsureZipCache(ctx, s.client, kospiMasterDownloadURL, kospiMasterFilename, cachePath)
+	if err != nil {
 		return nil, err
 	}
 
@@ -40,60 +38,29 @@ func (s *Service) loadKOSPIMaster(ctx context.Context, businessDate string) ([]k
 		return nil, err
 	}
 
-	if err := ensureKOSPIMasterJSONCache(cachePath, businessDate, records); err != nil {
+	jsonPath := resolveKOSPIMasterJSONPath(cachePath)
+	err = mstcache.EnsureJSONSidecar(cachePath, jsonPath, func() (any, error) {
+		return kospiMasterJSONCache{
+			BusinessDate: strings.TrimSpace(businessDate),
+			GeneratedAt:  time.Now().Format(time.RFC3339),
+			SourcePath:   cachePath,
+			RecordCount:  len(records),
+			Fields: []kospiMasterJSONField{
+				{Name: "code", Description: "6자리 단축 종목코드", Source: "part1[0:9]"},
+				{Name: "name", Description: "한글 종목명", Source: "part1[21:]"},
+				{Name: "market_cap", Description: "전일기준 시가총액(억)", Source: "field[65]"},
+				{Name: "net_income", Description: "당기순이익", Source: "field[62]"},
+				{Name: "roe", Description: "ROE(자기자본이익률)", Source: "field[63]"},
+				{Name: "base_date", Description: "재무 기준년월", Source: "field[64]"},
+			},
+			Records: records,
+		}, nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
 	return records, nil
-}
-
-func (s *Service) ensureKOSPIMasterCache(ctx context.Context, cachePath string) error {
-	_, err := os.Stat(cachePath)
-	if err == nil {
-		return nil
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to stat KOSPI master cache: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, kospiMasterDownloadURL, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to download KOSPI master zip: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("KOSPI master download failed (status %d)", resp.StatusCode)
-	}
-
-	zipBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	masterBytes, err := unzipSingleFile(zipBytes, kospiMasterFilename)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
-		return fmt.Errorf("failed to create KOSPI master cache dir: %w", err)
-	}
-
-	tmpPath := cachePath + ".tmp"
-	if err := os.WriteFile(tmpPath, masterBytes, 0o644); err != nil {
-		return fmt.Errorf("failed to write KOSPI master temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, cachePath); err != nil {
-		return fmt.Errorf("failed to replace KOSPI master cache: %w", err)
-	}
-
-	return nil
 }
 
 func resolveKOSPIMasterCachePath(cachePath string, businessDate string) string {
@@ -138,55 +105,7 @@ func resolveKOSPIMasterJSONPath(cachePath string) string {
 	return strings.TrimSuffix(cachePath, ext) + ".json"
 }
 
-func ensureKOSPIMasterJSONCache(cachePath string, businessDate string, records []kospiMasterRecord) error {
-	jsonPath := resolveKOSPIMasterJSONPath(cachePath)
 
-	masterInfo, err := os.Stat(cachePath)
-	if err != nil {
-		return fmt.Errorf("failed to stat KOSPI master cache for json export: %w", err)
-	}
-
-	if jsonInfo, err := os.Stat(jsonPath); err == nil && !masterInfo.ModTime().After(jsonInfo.ModTime()) {
-		return nil
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to stat KOSPI master json cache: %w", err)
-	}
-
-	payload := kospiMasterJSONCache{
-		BusinessDate: strings.TrimSpace(businessDate),
-		GeneratedAt:  time.Now().Format(time.RFC3339),
-		SourcePath:   cachePath,
-		RecordCount:  len(records),
-		Fields: []kospiMasterJSONField{
-			{Name: "code", Description: "6자리 단축 종목코드", Source: "part1[0:9]"},
-			{Name: "name", Description: "한글 종목명", Source: "part1[21:]"},
-			{Name: "market_cap", Description: "전일기준 시가총액(억)", Source: "field[65]"},
-			{Name: "net_income", Description: "당기순이익", Source: "field[62]"},
-			{Name: "roe", Description: "ROE(자기자본이익률)", Source: "field[63]"},
-			{Name: "base_date", Description: "재무 기준년월", Source: "field[64]"},
-		},
-		Records: records,
-	}
-
-	raw, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal KOSPI master json cache: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
-		return fmt.Errorf("failed to create KOSPI master json dir: %w", err)
-	}
-
-	tmpPath := jsonPath + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, 0o644); err != nil {
-		return fmt.Errorf("failed to write KOSPI master json temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, jsonPath); err != nil {
-		return fmt.Errorf("failed to replace KOSPI master json cache: %w", err)
-	}
-
-	return nil
-}
 
 func parseKOSPIMaster(raw []byte) ([]kospiMasterRecord, error) {
 	reader := transform.NewReader(bytes.NewReader(raw), korean.EUCKR.NewDecoder())
@@ -288,26 +207,4 @@ func normalizeShortCode(code string) string {
 	return code
 }
 
-func unzipSingleFile(zipBytes []byte, targetName string) ([]byte, error) {
-	readerAt := bytes.NewReader(zipBytes)
-	zipReader, err := zip.NewReader(readerAt, int64(len(zipBytes)))
-	if err != nil {
-		return nil, err
-	}
 
-	for _, file := range zipReader.File {
-		if !strings.EqualFold(file.Name, targetName) {
-			continue
-		}
-
-		fileReader, err := file.Open()
-		if err != nil {
-			return nil, err
-		}
-		defer fileReader.Close()
-
-		return io.ReadAll(fileReader)
-	}
-
-	return nil, fmt.Errorf("%s not found in zip archive", targetName)
-}

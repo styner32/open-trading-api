@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/kis-open-api/go/internal/fileio"
 )
 
 // CacheEntry is the JSON structure for daily-cached KOFIA data.
@@ -91,20 +93,13 @@ func (cc *CachedClient) loadCache(path string) (*CacheEntry, error) {
 }
 
 func (cc *CachedClient) saveCache(path, date string, rows []MarketFundsRow) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	entry := CacheEntry{
 		BusinessDate: date,
 		GeneratedAt:  time.Now(),
 		RecordCount:  len(rows),
 		Rows:         rows,
 	}
-	data, err := json.MarshalIndent(entry, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
+	return fileio.WriteJSONAtomic(path, entry)
 }
 
 // findRow finds a row whose date matches the given YYYYMMDD date.

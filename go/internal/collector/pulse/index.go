@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/parse"
 )
 
 type indexStock interface {
@@ -20,17 +21,17 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string) (Inde
 		return IndexLevel{}, fmt.Errorf("inquire-index-price (%s): %w", indexCode, err)
 	}
 
-	row := firstRowOf(resp, "output")
+	row := resp.FirstRow("output")
 	if row == nil {
 		return IndexLevel{}, fmt.Errorf("inquire-index-price (%s): output 행 없음", indexCode)
 	}
 
 	get := func(key string) float64 {
-		v, _ := numOf(row, key)
+		v, _ := parse.Num(row, key)
 		return v
 	}
 	getInt := func(key string) int {
-		v, _ := intOf(row, key)
+		v, _ := parse.Int(row, key)
 		return v
 	}
 
@@ -43,7 +44,7 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string) (Inde
 	}
 
 	// 전일 대비 % 필드가 있으면 우선 사용
-	if v, ok := numOf(row, "bstp_nmix_prdy_ctrt"); ok && math.Abs(v) > 0.0001 {
+	if v, ok := parse.Num(row, "bstp_nmix_prdy_ctrt"); ok && math.Abs(v) > 0.0001 {
 		changePct = v
 	}
 

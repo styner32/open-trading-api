@@ -2,20 +2,18 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
+
+	"github.com/kis-open-api/go/internal/envcfg"
 )
 
 func env(key string) string {
-	return strings.TrimSpace(os.Getenv(key))
+	return envcfg.Get(key, "")
 }
 
 func envDefault(key string, fallback string) string {
-	if value := env(key); value != "" {
-		return value
-	}
-	return fallback
+	return envcfg.Get(key, fallback)
 }
 
 func validateDate(value string) (string, error) {

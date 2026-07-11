@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kis-open-api/go/internal/parse"
 )
 
 const (
@@ -482,39 +484,23 @@ func selectCMEQuote(quotes []map[string]any) map[string]any {
 }
 
 func optionalFloatValue(value any) *float64 {
-	switch typed := value.(type) {
-	case nil:
-		return nil
-	case float64:
-		return floatPointer(typed)
-	case float32:
-		return floatPointer(float64(typed))
-	case int:
-		return floatPointer(float64(typed))
-	case int64:
-		return floatPointer(float64(typed))
-	case json.Number:
-		parsed, err := typed.Float64()
-		if err != nil {
+	if str, ok := value.(string); ok {
+		clean := strings.TrimSpace(strings.ReplaceAll(str, ",", ""))
+		if clean == "" || clean == "-" {
 			return nil
 		}
-		return floatPointer(parsed)
-	case string:
-		typed = strings.TrimSpace(strings.ReplaceAll(typed, ",", ""))
-		if typed == "" || typed == "-" {
-			return nil
-		}
-		if strings.EqualFold(typed, "UNCH") {
+		if strings.EqualFold(clean, "UNCH") {
 			return floatPointer(0)
 		}
-		parsed, err := strconv.ParseFloat(strings.TrimSuffix(typed, "%"), 64)
-		if err != nil {
-			return nil
+		if strings.HasSuffix(clean, "%") {
+			clean = strings.TrimSuffix(clean, "%")
 		}
-		return floatPointer(parsed)
-	default:
-		return nil
+		value = clean
 	}
+	if parsed, ok := parse.Float(value); ok {
+		return floatPointer(parsed)
+	}
+	return nil
 }
 
 func optionalPercentValue(value any) *float64 {

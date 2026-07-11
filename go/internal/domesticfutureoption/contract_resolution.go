@@ -6,6 +6,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/kis-open-api/go/internal/envcfg"
 )
 
 func (s *Service) ResolveNearMonthKOSPI200Futures(ctx context.Context, businessDate string) (*ResolvedContract, error) {
@@ -31,7 +33,7 @@ func (s *Service) ResolveNearMonthKOSPI200Futures(ctx context.Context, businessD
 		return nil, err
 	}
 
-	cachePath := resolveIndexFutureMasterCachePath(getOrDefaultEnv(indexFutureMasterCacheEnvKey, defaultIndexFutureMasterCache), businessDate)
+	cachePath := resolveIndexFutureMasterCachePath(envcfg.Get(indexFutureMasterCacheEnvKey, defaultIndexFutureMasterCache), businessDate)
 	return &ResolvedContract{
 		BusinessDate:    normalizeBusinessDate(businessDate),
 		Source:          "master",
@@ -52,7 +54,7 @@ func (s *Service) ResolveNearMonthKOSDAQ150Futures(ctx context.Context, business
 	if err != nil {
 		return nil, err
 	}
-	cachePath := resolveIndexFutureMasterCachePath(getOrDefaultEnv(indexFutureMasterCacheEnvKey, defaultIndexFutureMasterCache), businessDate)
+	cachePath := resolveIndexFutureMasterCachePath(envcfg.Get(indexFutureMasterCacheEnvKey, defaultIndexFutureMasterCache), businessDate)
 	return &ResolvedContract{
 		BusinessDate:    normalizeBusinessDate(businessDate),
 		Source:          "master",

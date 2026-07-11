@@ -1,12 +1,8 @@
 package quadwitching
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/fileio"
 )
 
 type EndpointSnapshot struct {
@@ -62,25 +58,5 @@ func NewEndpointSnapshot(resp *auth.RESTResponse, err error) EndpointSnapshot {
 }
 
 func WriteSnapshot(path string, payload SnapshotExport) error {
-	if path == "" {
-		return fmt.Errorf("path is required")
-	}
-
-	raw, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal quad witching snapshot: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("failed to create snapshot directory: %w", err)
-	}
-
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, 0o600); err != nil {
-		return fmt.Errorf("failed to write snapshot temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("failed to replace snapshot file: %w", err)
-	}
-	return nil
+	return fileio.WriteJSONAtomic(path, payload)
 }

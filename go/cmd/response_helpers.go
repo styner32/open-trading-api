@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/parse"
 )
 
 func printAPIResult(name string, resp *auth.RESTResponse, outputKey string) {
@@ -131,48 +131,15 @@ func rawPreview(raw []byte) string {
 }
 
 func firstRow(resp *auth.RESTResponse, outputKey string) map[string]any {
-	rows := rowsFromResponse(resp, outputKey)
-	if len(rows) == 0 {
-		return nil
-	}
-	return rows[0]
+	return resp.FirstRow(outputKey)
 }
 
 func firstRowAny(resp *auth.RESTResponse, outputKeys ...string) map[string]any {
-	for _, outputKey := range outputKeys {
-		if row := firstRow(resp, outputKey); row != nil {
-			return row
-		}
-	}
-	return nil
+	return resp.FirstRow(outputKeys...)
 }
 
 func rowsFromResponse(resp *auth.RESTResponse, outputKey string) []map[string]any {
-	if resp == nil || resp.Body == nil {
-		return nil
-	}
-
-	raw, ok := resp.Body[outputKey]
-	if !ok || raw == nil {
-		return nil
-	}
-
-	switch typed := raw.(type) {
-	case map[string]any:
-		return []map[string]any{typed}
-	case []any:
-		rows := make([]map[string]any, 0, len(typed))
-		for _, item := range typed {
-			row, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			rows = append(rows, row)
-		}
-		return rows
-	default:
-		return nil
-	}
+	return resp.Rows(outputKey)
 }
 
 func findRowByValue(rows []map[string]any, key string, target string) map[string]any {
@@ -210,16 +177,7 @@ func fieldString(row map[string]any, key string) string {
 }
 
 func fieldFloat(row map[string]any, key string) (float64, bool) {
-	value := fieldString(row, key)
-	if value == "" {
-		return 0, false
-	}
-
-	parsed, err := strconv.ParseFloat(strings.ReplaceAll(value, ",", ""), 64)
-	if err != nil {
-		return 0, false
-	}
-	return parsed, true
+	return parse.Num(row, key)
 }
 
 func computeBasis(row map[string]any) (float64, bool) {
