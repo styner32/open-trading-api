@@ -3,31 +3,35 @@ package snapshot
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/kis-open-api/go/internal/external/yahoo"
 )
 
 // RegimeSection은 매크로 채널/시장 국면 분류를 담습니다.
 type RegimeSection struct {
-	Phase           string  // "지정학 risk-off", "성장 둔화 risk-off" 등
-	KOSPINASDAQCorr float64 // KOSPI-NASDAQ 30일 상관계수
-	KOSPINIKKEICorr float64 // KOSPI-NIKKEI 30일 상관계수
-	RiskAversionIdx float64 // 위험회피지수 0~10
-	Reason          string
+	Phase                   string        `json:"phase"`
+	KOSPINASDAQCorr         float64       `json:"kospi_nasdaq_corr"`
+	KOSPINIKKEICorr         float64       `json:"kospi_nikkei_corr"`
+	GlobalRiskAversionIdx   float64       `json:"global_risk_aversion_idx"`  // 글로벌 위험회피지수 0~10
+	DomesticMarketStressIdx float64       `json:"domestic_market_stress_idx"` // 국내 시장 스트레스 지수 0~10
+	Reason                  string        `json:"-"`
+	Status                  QualityStatus `json:"status,omitempty"`
+	QualityFlags            []string      `json:"quality_flags,omitempty"`
 }
 
 // collectRegime은 Yahoo 30일 히스토리로 상관계수와 시장 국면을 계산합니다.
-// TODO: Yahoo Finance 장애 시 대체 제공업체(EODHD 등) 연동 검토.
-func collectRegime(ctx context.Context, yClient YahooQuotes, price *PriceSection, volatility *VolatilitySection, impact *ImpactSection, macro *MacroSection) *RegimeSection {
-	s := &RegimeSection{}
+func collectRegime(ctx context.Context, yClient YahooQuotes, price *PriceSection, volatility *VolatilitySection, impact *ImpactSection, macro *MacroSection, credit *CreditSection) *RegimeSection {
+	s := &RegimeSection{Status: StatusValid}
 	if yClient == nil {
 		s.Reason = "yahoo dependency is nil"
+		s.Status = StatusUnavailable
 		return s
 	}
 
 	// 30일 일별 종가 조회
 	symbols := []string{"^KS11", "NQ=F", "^N225", "CL=F", "KRW=X"}
-	history := map[string][]float64{}
+	charts := map[string][]yahoo.DailyClose{}
 	var firstErr string
 	for _, sym := range symbols {
 		closes, err := yClient.GetChartHistory(ctx, sym, "1mo", "1d")
@@ -37,43 +41,208 @@ func collectRegime(ctx context.Context, yClient YahooQuotes, price *PriceSection
 			}
 			continue
 		}
-		history[sym] = dailyReturns(closes)
+		charts[sym] = closes
 	}
-	if len(history) == 0 {
+
+	if len(charts) == 0 {
 		s.Reason = "chart history unavailable: " + firstErr
-		return s
+		s.Status = StatusUnavailable
+	}
+
+	coverage := float64(len(charts)) / float64(len(symbols))
+	if coverage < 0.7 {
+		s.Status = StatusInsufficientData
+		s.QualityFlags = []string{"REGIME_DATA_MISSING"}
+	}
+
+	// 상관계수 계산을 위한 데이터 정렬
+	var alignedKS, alignedNQ []float64
+	var alignedKSN225, alignedN225 []float64
+
+	if ksCloses, ok := charts["^KS11"]; ok {
+		if nqCloses, ok2 := charts["NQ=F"]; ok2 {
+			alignedKS, alignedNQ = alignUSSeries(ksCloses, nqCloses)
+			if len(alignedKS) >= 3 {
+				s.KOSPINASDAQCorr = pearsonCorr(alignedKS, alignedNQ)
+			}
+		}
+		if n225Closes, ok2 := charts["^N225"]; ok2 {
+			alignedKSN225, alignedN225 = alignNikkeiSeries(ksCloses, n225Closes)
+			if len(alignedKSN225) >= 3 {
+				s.KOSPINIKKEICorr = pearsonCorr(alignedKSN225, alignedN225)
+			}
+		}
 	}
 
 	// 시장 국면 분류
-	s.Phase = classifyPhase(price, impact, macro)
-	// 상관계수
-	if ks, ok := history["^KS11"]; ok {
-		if nq, ok2 := history["NQ=F"]; ok2 {
-			s.KOSPINASDAQCorr = pearsonCorr(ks, nq)
-		}
-		if n225, ok2 := history["^N225"]; ok2 {
-			s.KOSPINIKKEICorr = pearsonCorr(ks, n225)
+	s.Phase = classifyPhase(price, impact, volatility, macro)
+
+	// 글로벌 위험회피지수 (Global Risk Aversion Index, 0~10)
+	globalScore := 0.0
+
+	// 1. 나스닥 상관성 컴포넌트 (Weight 0.20)
+	globalScore += (1.0 - math.Max(-1.0, math.Min(1.0, s.KOSPINASDAQCorr))) / 2.0 * 10.0 * 0.20
+
+	// 2. VIX 컴포넌트 (Weight 0.30)
+	vixVal := 15.0
+	if volatility != nil && volatility.VIX > 0 {
+		vixVal = volatility.VIX
+	}
+	globalScore += math.Min(vixVal/30.0, 1.0) * 10.0 * 0.30
+
+	// 3. 환율 변동 컴포넌트 (Weight 0.20)
+	krwChg := 0.0
+	if macro != nil {
+		if q, ok := macro.Quotes["KRW=X"]; ok {
+			krwChg = math.Abs(q.ChangePercent)
 		}
 	}
-	s.RiskAversionIdx = calcRiskAversionIdx(price, volatility, impact, s.KOSPINASDAQCorr, macro)
+	globalScore += math.Min(krwChg/1.5, 1.0) * 10.0 * 0.20
+
+	// 4. WTI 유가 변동 컴포넌트 (Weight 0.15)
+	wtiChg := 0.0
+	if macro != nil {
+		if q, ok := macro.Quotes["CL=F"]; ok {
+			wtiChg = math.Abs(q.ChangePercent)
+		}
+	}
+	globalScore += math.Min(wtiChg/3.0, 1.0) * 10.0 * 0.15
+
+	// 5. 미국 10년물 국채금리 변동 컴포넌트 (Weight 0.15)
+	tnxChg := 0.0
+	if macro != nil {
+		if q, ok := macro.Quotes["^TNX"]; ok {
+			tnxChg = math.Abs(q.ChangePercent)
+		}
+	}
+	globalScore += math.Min(tnxChg/3.0, 1.0) * 10.0 * 0.15
+
+	s.GlobalRiskAversionIdx = math.Round(globalScore*10) / 10
+
+	// 국내 시장 스트레스 지수 (Domestic Market Stress Index, 0~10)
+	domScore := 0.0
+
+	// 1. KOSPI 일간 변동 컴포넌트 (Weight 0.25)
+	kospiChg := 0.0
+	if price != nil && price.PreviousClose > 0 {
+		kospiChg = (price.Close - price.PreviousClose) / price.PreviousClose * 100.0
+		if kospiChg < 0 {
+			domScore += math.Min(math.Abs(kospiChg)/4.0, 1.0) * 10.0 * 0.25
+		}
+	}
+
+	// 2. VKOSPI 변동성 컴포넌트 (Weight 0.25)
+	vkospiVal := 0.0
+	if volatility != nil && volatility.VKOSPI > 0 {
+		vkospiVal = volatility.VKOSPI
+	} else if price != nil && price.Low > 0 {
+		intradayRangePct := (price.High - price.Low) / price.Low * 100.0
+		vkospiVal = math.Min(intradayRangePct*5.0, 50.0)
+	}
+	if vkospiVal > 0 {
+		domScore += math.Min(vkospiVal/40.0, 1.0) * 10.0 * 0.25
+	}
+
+	// 3. 외국인 순수급 강도 컴포넌트 (Weight 0.20)
+	if impact != nil && impact.ForeignNetFlowToTradingValue != nil {
+		domScore += math.Min(math.Abs(*impact.ForeignNetFlowToTradingValue)/25.0, 1.0) * 10.0 * 0.20
+	}
+
+	// 4. 안전장치 발동 컴포넌트 (Weight 0.15)
+	if impact != nil && impact.SidecarStatus == "triggered" {
+		domScore += 1.5
+	}
+
+	// 5. 신용 반대매매 컴포넌트 (Weight 0.15)
+	forcedSellVal := 0.0
+	if credit != nil {
+		forcedSellVal = credit.ForcedSellRatioPct
+	}
+	domScore += math.Min(forcedSellVal/10.0, 1.0) * 10.0 * 0.15
+
+	// 스트레스 지수 보정 및 Floor 설정
+	domResult := math.Round(domScore*10) / 10
+	if kospiChg <= -8.0 {
+		domResult = math.Max(domResult, 9.0)
+	} else if kospiChg <= -7.0 {
+		domResult = math.Max(domResult, 8.0)
+	} else if kospiChg <= -5.0 {
+		domResult = math.Max(domResult, 7.0)
+	} else if kospiChg <= -3.0 {
+		domResult = math.Max(domResult, 5.0)
+	}
+	if impact != nil && impact.SidecarStatus == "triggered" {
+		domResult = math.Max(domResult, 6.0)
+	}
+
+	s.DomesticMarketStressIdx = domResult
+
 	if firstErr != "" {
 		s.Reason = "partial: " + firstErr
 	}
 	return s
 }
 
-func dailyReturns(closes []yahoo.DailyClose) []float64 {
-	if len(closes) < 2 {
-		return nil
+// alignUSSeries: KOSPI 거래일 D의 09:00 KST 직전 완결된 가장 최근 NASDAQ 거래일을 매칭
+func alignUSSeries(ksSeries, usSeries []yahoo.DailyClose) ([]float64, []float64) {
+	kst := time.FixedZone("KST", 9*3600)
+	var ksReturns, usReturns []float64
+
+	if len(ksSeries) < 2 || len(usSeries) < 2 {
+		return nil, nil
 	}
-	returns := make([]float64, len(closes)-1)
-	for i := 1; i < len(closes); i++ {
-		if closes[i-1].Close == 0 {
-			continue
+
+	for i := 1; i < len(ksSeries); i++ {
+		ksTime := time.Unix(ksSeries[i].DateUnix, 0).In(kst)
+		ksOpenTime := time.Date(ksTime.Year(), ksTime.Month(), ksTime.Day(), 9, 0, 0, 0, kst)
+
+		var bestIdx int = -1
+		for j := 1; j < len(usSeries); j++ {
+			usTime := time.Unix(usSeries[j].DateUnix, 0)
+			if usTime.Before(ksOpenTime) {
+				bestIdx = j
+			}
 		}
-		returns[i-1] = (closes[i].Close - closes[i-1].Close) / closes[i-1].Close * 100
+
+		if bestIdx > 0 {
+			ksRet := (ksSeries[i].Close - ksSeries[i-1].Close) / ksSeries[i-1].Close * 100.0
+			usRet := (usSeries[bestIdx].Close - usSeries[bestIdx-1].Close) / usSeries[bestIdx-1].Close * 100.0
+			ksReturns = append(ksReturns, ksRet)
+			usReturns = append(usReturns, usRet)
+		}
 	}
-	return returns
+	return ksReturns, usReturns
+}
+
+// alignNikkeiSeries: KOSPI 거래일 D의 15:30 KST 직전 완결된 가장 최근 Nikkei 거래일을 매칭
+func alignNikkeiSeries(ksSeries, jpSeries []yahoo.DailyClose) ([]float64, []float64) {
+	kst := time.FixedZone("KST", 9*3600)
+	var ksReturns, jpReturns []float64
+
+	if len(ksSeries) < 2 || len(jpSeries) < 2 {
+		return nil, nil
+	}
+
+	for i := 1; i < len(ksSeries); i++ {
+		ksTime := time.Unix(ksSeries[i].DateUnix, 0).In(kst)
+		ksCloseTime := time.Date(ksTime.Year(), ksTime.Month(), ksTime.Day(), 15, 30, 0, 0, kst)
+
+		var bestIdx int = -1
+		for j := 1; j < len(jpSeries); j++ {
+			jpTime := time.Unix(jpSeries[j].DateUnix, 0)
+			if jpTime.Before(ksCloseTime) {
+				bestIdx = j
+			}
+		}
+
+		if bestIdx > 0 {
+			ksRet := (ksSeries[i].Close - ksSeries[i-1].Close) / ksSeries[i-1].Close * 100.0
+			jpRet := (jpSeries[bestIdx].Close - jpSeries[bestIdx-1].Close) / jpSeries[bestIdx-1].Close * 100.0
+			ksReturns = append(ksReturns, ksRet)
+			jpReturns = append(jpReturns, jpRet)
+		}
+	}
+	return ksReturns, jpReturns
 }
 
 func pearsonCorr(x, y []float64) float64 {
@@ -114,13 +283,12 @@ func min2(a, b int) int {
 	return b
 }
 
-// classifyPhase: 지수 급락 및 사이드카 발동 감지 포함한 시장 국면 분류
-func classifyPhase(price *PriceSection, impact *ImpactSection, macro *MacroSection) string {
+func classifyPhase(price *PriceSection, impact *ImpactSection, volatility *VolatilitySection, macro *MacroSection) string {
 	var isPanic bool
 	var panicLabel string
 
 	if price != nil && price.PreviousClose > 0 {
-		chg := (price.Close - price.PreviousClose) / price.PreviousClose * 100
+		chg := (price.Close - price.PreviousClose) / price.PreviousClose * 100.0
 		if chg <= -8.0 {
 			isPanic = true
 			panicLabel = "시장 패닉 (CB 발동 급락)"
@@ -130,6 +298,11 @@ func classifyPhase(price *PriceSection, impact *ImpactSection, macro *MacroSecti
 		} else if chg <= -3.0 {
 			isPanic = true
 			panicLabel = "급락 국면"
+		} else if chg >= 2.0 {
+			if volatility != nil && volatility.VKOSPI >= 30.0 {
+				return "고변동성 반등"
+			}
+			return "강세 반등"
 		}
 	}
 
@@ -144,6 +317,10 @@ func classifyPhase(price *PriceSection, impact *ImpactSection, macro *MacroSecti
 
 	if isPanic {
 		return panicLabel
+	}
+
+	if volatility != nil && volatility.VKOSPI >= 30.0 {
+		return "고변동성 장세"
 	}
 
 	if macro == nil {
@@ -163,66 +340,4 @@ func classifyPhase(price *PriceSection, impact *ImpactSection, macro *MacroSecti
 	default:
 		return "특이 신호 없음"
 	}
-}
-
-// calcRiskAversionIdx: 0~10 위험회피 지수 계산
-func calcRiskAversionIdx(price *PriceSection, vol *VolatilitySection, imp *ImpactSection, corrKOSPINASDAQ float64, macro *MacroSection) float64 {
-	score := 0.0
-
-	// 1. KOSPI 일간 수익률 / 패닉 컴포넌트 (Weight 0.25)
-	kospiChg := 0.0
-	if price != nil && price.PreviousClose > 0 {
-		kospiChg = (price.Close - price.PreviousClose) / price.PreviousClose * 100
-		if kospiChg < 0 {
-			score += math.Min(math.Abs(kospiChg)/4.0, 1.0) * 10 * 0.25
-		}
-	}
-
-	// 2. VKOSPI 변동성 컴포넌트 (Weight 0.25) - 없으면 일간 변동폭 프록시 사용
-	vkospiVal := 0.0
-	if vol != nil && vol.VKOSPI > 0 {
-		vkospiVal = vol.VKOSPI
-	} else if price != nil && price.Low > 0 {
-		// VKOSPI가 없을 경우 당일 고저 변동률 * 5배로 근사 (변동성 프록시)
-		intradayRangePct := (price.High - price.Low) / price.Low * 100
-		vkospiVal = math.Min(intradayRangePct*5.0, 50.0)
-	}
-	if vkospiVal > 0 {
-		score += math.Min(vkospiVal/40.0, 1.0) * 10 * 0.25
-	}
-
-	// 3. 외인 거래대금 비중 (Weight 0.20)
-	if imp != nil && imp.ForeignSellTradingValuePercent != nil {
-		score += math.Min(*imp.ForeignSellTradingValuePercent/25.0, 1.0) * 10 * 0.20
-	}
-
-	// 4. 환율 변동 (Weight 0.15)
-	krwChg := 0.0
-	if macro != nil {
-		krwChg = math.Abs(macro.Quotes["KRW=X"].ChangePercent)
-		score += math.Min(krwChg/1.5, 1.0) * 10 * 0.15
-	}
-
-	// 5. 디커플링 강도 (Weight 0.15)
-	score += (1 - math.Max(-1, math.Min(1, corrKOSPINASDAQ))) / 2 * 10 * 0.15
-
-	// 지수 최종 보정
-	result := math.Round(score*10) / 10
-
-	// 급락/패닉 상황에서의 최소 지수 Floor 설정
-	if kospiChg <= -8.0 {
-		result = math.Max(result, 9.0)
-	} else if kospiChg <= -7.0 {
-		result = math.Max(result, 8.0)
-	} else if kospiChg <= -5.0 {
-		result = math.Max(result, 7.0)
-	} else if kospiChg <= -3.0 {
-		result = math.Max(result, 5.0)
-	}
-
-	if imp != nil && imp.SidecarStatus == "triggered" {
-		result = math.Max(result, 6.0)
-	}
-
-	return result
 }

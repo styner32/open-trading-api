@@ -44,4 +44,7 @@ func signedNumber(v float64, decimals int) string { return format.Signed(v, deci
 func percent(v float64) string { return format.Percent(v) }
 func percentPlain(v float64) string { return format.PercentPlain(v) }
 func eok(v float64) string { return format.Eok(v) }
+func eokPlain(v float64) string { return format.EokPlain(v) }
 func trillionFromEok(v float64) string { return format.TrillionFromEok(v) }
+func trillionFromEokPlain(v float64) string { return format.TrillionFromEokPlain(v) }
+

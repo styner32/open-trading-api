@@ -40,28 +40,19 @@ func autoSemiconductorCapRatio(ctx context.Context, stock DomesticStock, date st
 	if stock == nil {
 		return nil, "domestic stock dependency is nil"
 	}
-	samsung, err := stock.InquirePrice(ctx, "005930")
-	if err != nil {
-		return nil, "005930 market cap: " + err.Error()
-	}
-	hynix, err := stock.InquirePrice(ctx, "000660")
-	if err != nil {
-		return nil, "000660 market cap: " + err.Error()
-	}
 	summary, err := stock.KOSPIMarketCapSummary(ctx, date)
 	if err != nil {
 		return nil, err.Error()
 	}
-	samsungCap, ok := num(firstRow(samsung, "output"), "hts_avls")
-	if !ok {
-		return nil, "005930 hts_avls missing"
-	}
-	hynixCap, ok := num(firstRow(hynix, "output"), "hts_avls")
-	if !ok {
-		return nil, "000660 hts_avls missing"
-	}
 	if summary.TotalMarketCap <= 0 {
 		return nil, fmt.Sprintf("invalid KOSPI total market cap %.2f", summary.TotalMarketCap)
 	}
-	return ptr((samsungCap + hynixCap) / summary.TotalMarketCap * 100), ""
+	var semiCap float64
+	for _, c := range summary.Constituents {
+		if c.Code == "005930" || c.Code == "000660" {
+			semiCap += c.MarketCap
+		}
+	}
+	return ptr(semiCap / summary.TotalMarketCap * 100), ""
 }
+

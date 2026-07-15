@@ -8,13 +8,13 @@ import (
 )
 
 type ImpactSection struct {
-	// Fix 2: 거래대금 기반 외인 비중 (주요 지표)
-	ForeignSellTradingValuePercent *float64
-	ForeignSellTradingValueLabel   string // "정상"/"주의"/"위험"
-	ForeignSellTradingValueReason  string
-	// 시총 대비 (참고용 유지)
-	ForeignSellMarketCapPercent *float64
-	ForeignSellReason           string
+	// 거래대금 대비 외인 순수급 강도 (주요 지표)
+	ForeignNetFlowToTradingValue *float64
+	ForeignSellTradingValueLabel string // "정상"/"주의"/"위험"
+	ForeignSellTradingValueReason string
+	// 시총 대비 외인 순수급 (참고용)
+	ForeignNetFlowToMarketCap *float64
+	ForeignSellReason         string
 	// 반도체
 	SemiconductorSellConcentrationPct *float64
 	SemiconductorReason               string
@@ -40,8 +40,8 @@ func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSectio
 	} else {
 		// Fix 2: 거래대금 분모
 		if price != nil && price.TradingValueEok > 0 {
-			pct := math.Abs(flow.ForeignEok) / price.TradingValueEok * 100
-			section.ForeignSellTradingValuePercent = ptr(pct)
+			pct := flow.ForeignEok / price.TradingValueEok * 100
+			section.ForeignNetFlowToTradingValue = ptr(pct)
 			section.ForeignSellTradingValueLabel = tradingValueLabel(pct)
 		} else {
 			section.ForeignSellTradingValueReason = "trading value unavailable"
@@ -52,7 +52,7 @@ func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSectio
 		} else if summary, err := deps.DomesticStock.KOSPIMarketCapSummary(ctx, date); err != nil {
 			section.ForeignSellReason = err.Error()
 		} else {
-			section.ForeignSellMarketCapPercent = absPercent(flow.ForeignEok, summary.TotalMarketCap)
+			section.ForeignNetFlowToMarketCap = signedPercent(flow.ForeignEok, summary.TotalMarketCap)
 		}
 		// 반도체
 		if opts.SemiconductorForeignNetSellEok != nil {
@@ -68,15 +68,17 @@ func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSectio
 }
 
 func tradingValueLabel(pct float64) string {
+	absPct := math.Abs(pct)
 	switch {
-	case pct < 10:
+	case absPct < 10:
 		return "정상"
-	case pct < 20:
+	case absPct < 20:
 		return "주의"
 	default:
 		return "위험"
 	}
 }
+
 
 func (s *ImpactSection) collectFutures(ctx context.Context, futures DomesticFuture, date string) {
 	if futures == nil {

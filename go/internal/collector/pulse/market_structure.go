@@ -290,7 +290,7 @@ func collectContributions(ctx context.Context, stock contributionStock, business
 	return out, nil
 }
 
-func buildMarketSafety(kospi, kosdaq IndexLevel, k200, kq150 IndexFutureSnapshot) MarketSafety {
+func buildMarketSafety(kospi, kosdaq IndexLevel, k200, kq150 IndexFutureSnapshot, records []PulseRecord) MarketSafety {
 	s := MarketSafety{}
 	for _, item := range []struct {
 		name string
@@ -304,18 +304,26 @@ func buildMarketSafety(kospi, kosdaq IndexLevel, k200, kq150 IndexFutureSnapshot
 		for _, threshold := range []float64{8, 15, 20} {
 			currentGap, currentReached := downsideGap(item.idx.ChangePct, threshold)
 			lowGap, lowReached := downsideGap(lowPct, threshold)
+			
+			triggerIndexLevel := item.idx.PrevClose * (1.0 - threshold/100.0)
+			drawdownRequiredPct := 0.0
+			if item.idx.Price > 0 {
+				drawdownRequiredPct = (triggerIndexLevel - item.idx.Price) / item.idx.Price * 100.0
+			}
+			
 			cb.Levels = append(cb.Levels, ThresholdStatus{
 				ThresholdPct: threshold, CurrentGapPct: currentGap, LowGapPct: lowGap,
 				CurrentReached: currentReached, LowReached: lowReached,
+				TriggerIndexLevel: triggerIndexLevel, DrawdownRequiredPct: drawdownRequiredPct,
 			})
 		}
 		s.CircuitBreakers = append(s.CircuitBreakers, cb)
 	}
 	if k200.OK {
-		s.Sidecars = append(s.Sidecars, buildSidecar("KOSPI", k200, 5, 0))
+		s.Sidecars = append(s.Sidecars, buildSidecar("KOSPI", k200, 5, 0, records))
 	}
 	if kq150.OK {
-		s.Sidecars = append(s.Sidecars, buildSidecar("KOSDAQ", kq150, 6, 3))
+		s.Sidecars = append(s.Sidecars, buildSidecar("KOSDAQ", kq150, 6, 3, records))
 	}
 	return s
 }
@@ -328,8 +336,7 @@ func downsideGap(changePct, threshold float64) (float64, bool) {
 	return gap, false
 }
 
-
-func buildSidecar(market string, f IndexFutureSnapshot, futuresThreshold, spotThreshold float64) SidecarStatus {
+func buildSidecar(market string, f IndexFutureSnapshot, futuresThreshold, spotThreshold float64, records []PulseRecord) SidecarStatus {
 	direction := "보합"
 	if f.ChangePct > 0 {
 		direction = "상승"
@@ -343,15 +350,79 @@ func buildSidecar(market string, f IndexFutureSnapshot, futuresThreshold, spotTh
 		spotGap = math.Max(0, spotThreshold-math.Abs(f.SpotChangePct))
 		spotReached = spotGap == 0 && sign(f.ChangePct) == sign(f.SpotChangePct)
 	}
+	thresholdReached := futuresGap == 0 && spotReached
+
+	triggeredToday := false
+	triggeredDir := ""
+
+	checkTrigger := func(chg, spotChg float64, ok bool) (bool, string) {
+		if !ok {
+			return false, ""
+		}
+		if math.Abs(chg) >= futuresThreshold {
+			if spotThreshold > 0 {
+				if math.Abs(spotChg) >= spotThreshold && sign(chg) == sign(spotChg) {
+					d := "상승"
+					if chg < 0 {
+						d = "하락"
+					}
+					return true, d
+				}
+			} else {
+				d := "상승"
+				if chg < 0 {
+					d = "하락"
+				}
+				return true, d
+			}
+		}
+		return false, ""
+	}
+
+	for _, r := range records {
+		var histF IndexFutureSnapshot
+		if market == "KOSPI" {
+			histF = r.KOSPI200Future
+		} else {
+			histF = r.KOSDAQ150Future
+		}
+		if trig, d := checkTrigger(histF.ChangePct, histF.SpotChangePct, histF.OK); trig {
+			triggeredToday = true
+			triggeredDir = d
+			break
+		}
+	}
+
+	if !triggeredToday {
+		if trig, d := checkTrigger(f.ChangePct, f.SpotChangePct, f.OK); trig {
+			triggeredToday = true
+			triggeredDir = d
+		}
+	}
+
+	status := "NOT_TRIGGERED"
+	if triggeredToday {
+		if thresholdReached {
+			status = "TRIGGERED"
+		} else {
+			status = "ALREADY_TRIGGERED_TODAY"
+		}
+		direction = triggeredDir
+	}
+
 	return SidecarStatus{
 		Market: market, FuturesCode: f.Code, Direction: direction,
 		FuturesChangePct: f.ChangePct, SpotChangePct: f.SpotChangePct,
 		FuturesThresholdPct: futuresThreshold, SpotThresholdPct: spotThreshold,
 		FuturesGapPct: futuresGap, SpotGapPct: spotGap,
-		ThresholdReached:    futuresGap == 0 && spotReached,
+		ThresholdReached:    thresholdReached,
 		ActivationConfirmed: false, OK: true,
+		TriggeredToday:      triggeredToday,
+		TriggeredDirection:  triggeredDir,
+		Status:              status,
 	}
 }
+
 
 func computeProgramDelta(records []PulseRecord, now time.Time, cur ProgramTradeSnapshot, market string) *ProgramTradeDelta {
 	if !cur.OK {

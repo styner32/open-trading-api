@@ -65,7 +65,7 @@ func Render(p *Pulse) string {
 	b.WriteString("\n")
 
 	// ── 5. KOSPI 기여도 ─────────────────────────────────────────────────────
-	b.WriteString("🧱 KOSPI 시총 상위 10종목 포인트 기여도 (추정)\n")
+	b.WriteString("🧱 KOSPI 시총 상위 10종목 기여도 추정 (전일 종가 가중치 기준)\n")
 	if len(p.Contributions) == 0 {
 		b.WriteString("  데이터 없음\n")
 	} else {
@@ -221,12 +221,12 @@ func renderMarketSafety(b *strings.Builder, safety MarketSafety) {
 			continue
 		}
 		phase1 := cb.Levels[0]
-		state := fmt.Sprintf("현재까지 %.2f%%p · 장중저점 기준 %.2f%%p", phase1.CurrentGapPct, phase1.LowGapPct)
+		state := fmt.Sprintf("현재 추가 하락 필요폭(현재 지수 기준) %.2f%% · 전일 대비 수익률 기준 간격 %.2f%%p", phase1.DrawdownRequiredPct, phase1.CurrentGapPct)
 		if phase1.CurrentReached || phase1.LowReached {
 			state = "임계 도달 · 실제 발동 미확인"
 		}
-		b.WriteString(fmt.Sprintf("  %s CB 1단계(-8%%): 현재 %+.2f%% / 저점 %+.2f%% → %s\n",
-			cb.Market, cb.CurrentChangePct, cb.LowChangePct, state))
+		b.WriteString(fmt.Sprintf("  %s CB 1단계(-%.0f%%): 기준 지수 %.2f | 현재 %+.2f%% / 저점 %+.2f%% → %s\n",
+			cb.Market, phase1.ThresholdPct, phase1.TriggerIndexLevel, cb.CurrentChangePct, cb.LowChangePct, state))
 	}
 	for _, sc := range safety.Sidecars {
 		if !sc.OK {

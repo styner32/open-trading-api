@@ -152,11 +152,13 @@ type BasisDelta struct {
 }
 
 type ThresholdStatus struct {
-	ThresholdPct   float64 `json:"threshold_pct"`
-	CurrentGapPct  float64 `json:"current_gap_pct"`
-	LowGapPct      float64 `json:"low_gap_pct"`
-	CurrentReached bool    `json:"current_reached"`
-	LowReached     bool    `json:"low_reached"`
+	ThresholdPct        float64 `json:"threshold_pct"`
+	CurrentGapPct       float64 `json:"current_gap_pct"`
+	LowGapPct           float64 `json:"low_gap_pct"`
+	CurrentReached      bool    `json:"current_reached"`
+	LowReached          bool    `json:"low_reached"`
+	TriggerIndexLevel   float64 `json:"trigger_index_level"`
+	DrawdownRequiredPct float64 `json:"drawdown_required_pct"`
 }
 
 type CircuitBreakerStatus struct {
@@ -180,6 +182,9 @@ type SidecarStatus struct {
 	ThresholdReached    bool    `json:"threshold_reached"`
 	ActivationConfirmed bool    `json:"activation_confirmed"`
 	OK                  bool    `json:"ok"`
+	TriggeredToday      bool    `json:"triggered_today"`
+	TriggeredDirection  string  `json:"triggered_direction,omitempty"`
+	Status              string  `json:"status,omitempty"` // "NOT_TRIGGERED", "TRIGGERED", "ALREADY_TRIGGERED_TODAY" etc.
 }
 
 type MarketSafety struct {
@@ -245,15 +250,17 @@ type Pulse struct {
 
 // PulseRecord는 JSONL에 적립되는 한 줄 레코드.
 type PulseRecord struct {
-	TS             time.Time            `json:"ts"`
-	BusinessDate   string               `json:"business_date,omitempty"`
-	KOSPIIdx       float64              `json:"kospi_idx"`
-	KOSDAQIdx      float64              `json:"kosdaq_idx"`
-	KOSPIFlow      FlowSnapshot         `json:"kospi_flow"`
-	KOSDAQFlow     FlowSnapshot         `json:"kosdaq_flow"`
-	KOSPIProgram   ProgramTradeSnapshot `json:"kospi_program,omitempty"`
-	KOSDAQProgram  ProgramTradeSnapshot `json:"kosdaq_program,omitempty"`
-	KOSPI200Future IndexFutureSnapshot  `json:"kospi200_future,omitempty"`
-	VKOSPI         VolatilitySnapshot   `json:"vkospi,omitempty"`
-	USDKRW         float64              `json:"usdkrw"`
+	TS              time.Time            `json:"ts"`
+	BusinessDate    string               `json:"business_date,omitempty"`
+	KOSPIIdx        float64              `json:"kospi_idx"`
+	KOSDAQIdx       float64              `json:"kosdaq_idx"`
+	KOSPIFlow       FlowSnapshot         `json:"kospi_flow"`
+	KOSDAQFlow      FlowSnapshot         `json:"kosdaq_flow"`
+	KOSPIProgram    ProgramTradeSnapshot `json:"kospi_program,omitempty"`
+	KOSDAQProgram   ProgramTradeSnapshot `json:"kosdaq_program,omitempty"`
+	KOSPI200Future  IndexFutureSnapshot  `json:"kospi200_future,omitempty"`
+	KOSDAQ150Future IndexFutureSnapshot  `json:"kosdaq150_future,omitempty"`
+	VKOSPI          VolatilitySnapshot   `json:"vkospi,omitempty"`
+	USDKRW          float64              `json:"usdkrw"`
 }
+

@@ -2,7 +2,6 @@ package snapshot
 
 import (
 	"fmt"
-	"math"
 	"strings"
 )
 
@@ -66,18 +65,18 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	isKISStale := p != nil && p.Credit != nil && c.Date != "" && p.Credit.Date != "" && c.Date == p.Credit.Date
 	isKOFIAStale := p != nil && p.Credit != nil && c.KofiaDate != "" && p.Credit.KofiaDate != "" && c.KofiaDate == p.Credit.KofiaDate
 
-	creditLine := trillionFromEok(c.CreditLoanBalanceEok)
+	creditLine := trillionFromEokPlain(c.CreditLoanBalanceEok)
 	if p != nil && p.Credit != nil && p.Credit.CreditLoanBalanceEok != 0 {
 		diff := c.CreditLoanBalanceEok - p.Credit.CreditLoanBalanceEok
 		diffStr := eok(diff) + "억"
 		if isKISStale {
 			diffStr = "미갱신"
 		}
-		creditLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.CreditLoanBalanceEok), diffStr)
+		creditLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEokPlain(p.Credit.CreditLoanBalanceEok), diffStr)
 	}
 	b.WriteString("- 신용융자 잔고: " + creditLine + "\n")
 
-	depositLine := trillionFromEok(c.CustomerDepositEok)
+	depositLine := trillionFromEokPlain(c.CustomerDepositEok)
 	if c.DepositChangeEok != 0 {
 		depositLine += fmt.Sprintf(" (전일 대비 %s억)", eok(c.DepositChangeEok))
 	}
@@ -87,19 +86,19 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		if isKISStale {
 			diffStr = "미갱신"
 		}
-		depositLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.CustomerDepositEok), diffStr)
+		depositLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEokPlain(p.Credit.CustomerDepositEok), diffStr)
 	}
 	b.WriteString("- 고객예탁금: " + depositLine + "\n")
 
 	if c.FuturesDepositEok != 0 {
-		futuresLine := trillionFromEok(c.FuturesDepositEok)
+		futuresLine := trillionFromEokPlain(c.FuturesDepositEok)
 		if p != nil && p.Credit != nil && p.Credit.FuturesDepositEok != 0 {
 			diff := c.FuturesDepositEok - p.Credit.FuturesDepositEok
 			diffStr := eok(diff) + "억"
 			if isKISStale {
 				diffStr = "미갱신"
 			}
-			futuresLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEok(p.Credit.FuturesDepositEok), diffStr)
+			futuresLine += fmt.Sprintf("  [전일 %s, %s]", trillionFromEokPlain(p.Credit.FuturesDepositEok), diffStr)
 		}
 		b.WriteString("- 선물예수금: " + futuresLine + "\n")
 	}
@@ -107,7 +106,7 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	// 반대매매 (KOFIA FreeSIS)
 	if c.ForcedSellAmountEok > 0 || c.MarginReceivableEok > 0 {
 		if c.MarginReceivableEok > 0 {
-			marginLine := eok(c.MarginReceivableEok) + "억"
+			marginLine := eokPlain(c.MarginReceivableEok) + "억"
 			if p != nil && p.Credit != nil && p.Credit.MarginReceivableEok > 0 {
 				diff := c.MarginReceivableEok - p.Credit.MarginReceivableEok
 				diffStr := eok(diff)
@@ -115,14 +114,14 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 					diffStr = "미갱신"
 				}
 				if isKOFIAStale {
-					marginLine += fmt.Sprintf("  [전일 %s억, %s]", eok(p.Credit.MarginReceivableEok), diffStr)
+					marginLine += fmt.Sprintf("  [전일 %s억, %s]", eokPlain(p.Credit.MarginReceivableEok), diffStr)
 				} else {
-					marginLine += fmt.Sprintf("  [전일 %s억, %s억]", eok(p.Credit.MarginReceivableEok), diffStr)
+					marginLine += fmt.Sprintf("  [전일 %s억, %s억]", eokPlain(p.Credit.MarginReceivableEok), diffStr)
 				}
 			}
 			b.WriteString("- 위탁매매 미수금: " + marginLine + "\n")
 		}
-		forcedLine := eok(c.ForcedSellAmountEok) + "억"
+		forcedLine := eokPlain(c.ForcedSellAmountEok) + "억"
 		if p != nil && p.Credit != nil && p.Credit.ForcedSellAmountEok > 0 {
 			diff := c.ForcedSellAmountEok - p.Credit.ForcedSellAmountEok
 			diffStr := eok(diff)
@@ -130,15 +129,15 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 				diffStr = "미갱신"
 			}
 			if isKOFIAStale {
-				forcedLine += fmt.Sprintf("  [전일 %s억, %s]", eok(p.Credit.ForcedSellAmountEok), diffStr)
+				forcedLine += fmt.Sprintf("  [전일 %s억, %s]", eokPlain(p.Credit.ForcedSellAmountEok), diffStr)
 			} else {
-				forcedLine += fmt.Sprintf("  [전일 %s억, %s억]", eok(p.Credit.ForcedSellAmountEok), diffStr)
+				forcedLine += fmt.Sprintf("  [전일 %s억, %s억]", eokPlain(p.Credit.ForcedSellAmountEok), diffStr)
 			}
 		}
 		b.WriteString("- 실제 반대매매: " + forcedLine)
 		if c.ForcedSellRatioPct > 0 {
 			level := forcedSellLevel(c.ForcedSellRatioPct)
-			b.WriteString(fmt.Sprintf(" (미수금 대비 %.1f%% %s)", c.ForcedSellRatioPct, level))
+			b.WriteString(fmt.Sprintf(" (전일 미수금 대비 %.1f%% %s)", c.ForcedSellRatioPct, level))
 		}
 		b.WriteString("\n")
 	} else if c.Reason != "" {
@@ -146,6 +145,7 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	}
 	b.WriteString("\n")
 }
+
 
 func forcedSellLevel(pct float64) string {
 	switch {
@@ -176,19 +176,30 @@ func renderRegime(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	b.WriteString("- 시장 국면: " + phaseLine + "\n")
 	b.WriteString("- 디커플링 강도\n")
 	if r.KOSPINASDAQCorr != 0 {
-		b.WriteString(fmt.Sprintf("  - KOSPI vs NASDAQ 30일 상관계수: %.2f%s\n", r.KOSPINASDAQCorr, corrLevel(r.KOSPINASDAQCorr)))
+		b.WriteString(fmt.Sprintf("  - KOSPI vs NASDAQ 30일 상관계수: %.2f%s (시각 정렬 적용)\n", r.KOSPINASDAQCorr, corrLevel(r.KOSPINASDAQCorr)))
 	}
 	if r.KOSPINIKKEICorr != 0 {
-		b.WriteString(fmt.Sprintf("  - KOSPI vs NIKKEI 30일 상관계수: %.2f%s\n", r.KOSPINIKKEICorr, corrLevel(r.KOSPINIKKEICorr)))
+		b.WriteString(fmt.Sprintf("  - KOSPI vs NIKKEI 30일 상관계수: %.2f%s (시각 정렬 적용)\n", r.KOSPINIKKEICorr, corrLevel(r.KOSPINIKKEICorr)))
 	}
-	riskLine := fmt.Sprintf("%.1f / 10", r.RiskAversionIdx)
+	
+	globalRiskLine := fmt.Sprintf("%.1f / 10", r.GlobalRiskAversionIdx)
 	if p != nil && p.Regime != nil {
-		diff := r.RiskAversionIdx - p.Regime.RiskAversionIdx
+		diff := r.GlobalRiskAversionIdx - p.Regime.GlobalRiskAversionIdx
 		if diff != 0 {
-			riskLine += fmt.Sprintf("  [전일 %.1f, %s]", p.Regime.RiskAversionIdx, signedNumber(diff, 1))
+			globalRiskLine += fmt.Sprintf("  [전일 %.1f, %s]", p.Regime.GlobalRiskAversionIdx, signedNumber(diff, 1))
 		}
 	}
-	b.WriteString("- 위험회피 지수: " + riskLine + "\n")
+	b.WriteString("- 글로벌 위험회피 지수: " + globalRiskLine + "\n")
+
+	domStressLine := fmt.Sprintf("%.1f / 10", r.DomesticMarketStressIdx)
+	if p != nil && p.Regime != nil {
+		diff := r.DomesticMarketStressIdx - p.Regime.DomesticMarketStressIdx
+		if diff != 0 {
+			domStressLine += fmt.Sprintf("  [전일 %.1f, %s]", p.Regime.DomesticMarketStressIdx, signedNumber(diff, 1))
+		}
+	}
+	b.WriteString("- 국내 시장 스트레스 지수: " + domStressLine + "\n")
+
 	if r.Reason != "" {
 		b.WriteString("- 부분 오류: " + r.Reason + "\n")
 	}
@@ -253,7 +264,11 @@ func renderConcentration(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	b.WriteString("- 상위 10종목 시총 비중: " + top10Line + "\n")
 	b.WriteString("- HHI (시총 기준): " + hhiLine + "\n")
 	b.WriteString("  - 임계값: <1,500 비집중, 1,500~2,500 중간, >2,500 고집중\n")
-	b.WriteString("- 자기파괴 위험도: " + c.RiskLevel + "\n\n")
+	b.WriteString("- 상위 종목 집중 위험: " + c.RiskLevel + "\n")
+	if s.Cumulative != nil && s.Cumulative.SamsungSKHynixCapRatio != nil {
+		b.WriteString(fmt.Sprintf("  - 구성요소: 상위 2종목(삼성전자+SK하이닉스) 비중 %.2f%%, HHI %.0f\n", *s.Cumulative.SamsungSKHynixCapRatio, c.HHI))
+	}
+	b.WriteString("\n")
 }
 
 func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
@@ -266,16 +281,21 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 
 	// 1) 선물-현물 베이시스
 	if ls.SpotPrice > 0 {
-		basisStr := fmt.Sprintf("%.2fpt (%.2f%%)", ls.BasisPoint, ls.BasisRate)
+		closeBasisStr := fmt.Sprintf("%.2fpt (%.2f%%)", ls.BasisPoint, ls.BasisRate)
 		if p != nil && p.LateSession != nil && p.LateSession.SpotPrice > 0 {
 			diffPoint := ls.BasisPoint - p.LateSession.BasisPoint
-			basisStr += fmt.Sprintf(" [전일 %.2fpt, %spt]", p.LateSession.BasisPoint, signedNumber(diffPoint, 2))
+			closeBasisStr += fmt.Sprintf(" [전일 %.2fpt, %spt]", p.LateSession.BasisPoint, signedNumber(diffPoint, 2))
 		}
-		if math.Abs(ls.BasisPoint) >= 2.0 {
-			basisStr += " ⚠ (베이시스 괴리 과다)"
+		
+		sameTimeBasisRate := 0.0
+		if ls.SpotPrice > 0 {
+			sameTimeBasisRate = (ls.BasisPoint1530 / ls.SpotPrice) * 100
 		}
-		b.WriteString(fmt.Sprintf("- 선물-현물 베이시스: %s\n", basisStr))
-		b.WriteString(fmt.Sprintf("  - 현물(KOSPI 200): %.2f | 선물(최근월): %.2f\n", ls.SpotPrice, ls.FuturesPrice))
+		sameTimeBasisStr := fmt.Sprintf("%.2fpt (%.2f%%)", ls.BasisPoint1530, sameTimeBasisRate)
+		
+		b.WriteString(fmt.Sprintf("- 선물-현물 동시점 베이시스 (15:30 KST): %s (판정 보류 — 이론 베이시스 미수집)\n", sameTimeBasisStr))
+		b.WriteString(fmt.Sprintf("- 선물-현물 종가간 스프레드 (15:45 / 15:30): %s\n", closeBasisStr))
+		b.WriteString(fmt.Sprintf("  - 현물(KOSPI 200 종가): %.2f | 선물 15:30가: %.2f | 선물 최종 종가: %.2f\n", ls.SpotPrice, ls.FuturesPrice1530, ls.FuturesPrice))
 	} else {
 		b.WriteString("- 선물-현물 베이시스: N/A\n")
 	}
@@ -285,14 +305,30 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	b.WriteString(fmt.Sprintf("  - 외국인: %s | 기관: %s | 전체: %s\n", eok(ls.KOSPINetNonArbitrageForeign), eok(ls.KOSPINetNonArbitrageOrgan), eok(ls.KOSPINetNonArbitrageTotal)))
 
 	// 3) 15시 이후 장 막판 흐름
+	progNetStr := "N/A"
+	if ls.LateProgramNetEok != nil {
+		progNetStr = eok(*ls.LateProgramNetEok)
+	}
 	b.WriteString("- 장 막판 수급 변화 (15:00 ~ 15:30, 억 원):\n")
-	b.WriteString(fmt.Sprintf("  - 프로그램 전체 순매수 변화: %s\n", eok(ls.LateProgramNetEok)))
+	b.WriteString(fmt.Sprintf("  - 프로그램 전체 순매수 변화: %s\n", progNetStr))
 
 	// 4) 종가 동시호가 중 수급 변화 (15:20 ~ 15:30)
+	closeProgStr := "N/A"
+	if ls.CloseSessionProgramNetEok != nil {
+		closeProgStr = eok(*ls.CloseSessionProgramNetEok)
+	}
 	b.WriteString("- 종가 동시호가 수급 변화 (15:20 ~ 15:30, 억 원):\n")
-	b.WriteString(fmt.Sprintf("  - 프로그램 전체 순매수 변화: %s\n", eok(ls.CloseSessionProgramNetEok)))
-	if ls.CloseSessionForeignNetEok != 0 || ls.CloseSessionOrganNetEok != 0 {
-		b.WriteString(fmt.Sprintf("  - 외국인(시장): %s | 기관(시장): %s\n", eok(ls.CloseSessionForeignNetEok), eok(ls.CloseSessionOrganNetEok)))
+	b.WriteString(fmt.Sprintf("  - 프로그램 전체 순매수 변화: %s\n", closeProgStr))
+	if ls.CloseSessionForeignNetEok != nil || ls.CloseSessionOrganNetEok != nil {
+		foreignStr := "N/A"
+		if ls.CloseSessionForeignNetEok != nil {
+			foreignStr = eok(*ls.CloseSessionForeignNetEok)
+		}
+		organStr := "N/A"
+		if ls.CloseSessionOrganNetEok != nil {
+			organStr = eok(*ls.CloseSessionOrganNetEok)
+		}
+		b.WriteString(fmt.Sprintf("  - 외국인(시장): %s | 기관(시장): %s\n", foreignStr, organStr))
 	}
 
 	// 5) 다중 막판 패턴 감지 요약 테이블
@@ -314,6 +350,9 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 			default:
 				return "**🔥 주도 패턴 (Dominant)**"
 			}
+		}
+		if ls.PrimaryPattern == "판정 보류 — 데이터 미수집" {
+			return "판정 보류"
 		}
 		if score >= 2.0 {
 			return "⚠️ 감지 (Detected)"
@@ -358,6 +397,10 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 			b.WriteString(fmt.Sprintf("- **상태**: ⚠ 패턴 감지됨 (%s, 점수: %.1f)\n\n", ls.PrimaryPattern, ls.CapitulationScore))
 		}
 	} else {
-		b.WriteString("- **패턴 감지 세부 정보**: 정상 상태 (특이 수급 패턴이 감지되지 않음)\n\n")
+		if ls.PrimaryPattern == "판정 보류 — 데이터 미수집" {
+			b.WriteString("- **패턴 감지 세부 정보**: 판정 보류 (장 막판 또는 동시호가 데이터 수집 누락으로 패턴 평가가 수행되지 않음)\n\n")
+		} else {
+			b.WriteString("- **패턴 감지 세부 정보**: 정상 상태 (특이 수급 패턴이 감지되지 않음)\n\n")
+		}
 	}
 }

@@ -140,7 +140,7 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
 	pulse.BasisDelta1h = basisDelta1h
 	pulse.BasisDelta2h = basisDelta2h
 	pulse.VKOSPI = vkospi
-	pulse.Safety = buildMarketSafety(kospiIdx, kosdaqIdx, kospi200Future, kosdaq150Future)
+	pulse.Safety = buildMarketSafety(kospiIdx, kosdaqIdx, kospi200Future, kosdaq150Future, records)
 	pulse.Contributions = contributions
 	pulse.USDKRW = usdkrw
 	pulse.Macro = macroWins
@@ -151,18 +151,20 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
 	// ── 8. 적립 (--no-save가 아닌 경우) ────────────────────────────────────
 	if !opts.NoSave {
 		rec := PulseRecord{
-			TS:             now,
-			BusinessDate:   pulse.BusinessDate,
-			KOSPIIdx:       kospiIdx.Price,
-			KOSDAQIdx:      kosdaqIdx.Price,
-			KOSPIFlow:      kospiFlow,
-			KOSDAQFlow:     kosdaqFlow,
-			KOSPIProgram:   kospiProgram,
-			KOSDAQProgram:  kosdaqProgram,
-			KOSPI200Future: kospi200Future,
-			VKOSPI:         vkospi,
-			USDKRW:         usdkrw.Current,
+			TS:              now,
+			BusinessDate:    pulse.BusinessDate,
+			KOSPIIdx:        kospiIdx.Price,
+			KOSDAQIdx:       kosdaqIdx.Price,
+			KOSPIFlow:       kospiFlow,
+			KOSDAQFlow:      kosdaqFlow,
+			KOSPIProgram:    kospiProgram,
+			KOSDAQProgram:   kosdaqProgram,
+			KOSPI200Future:  kospi200Future,
+			KOSDAQ150Future: kosdaq150Future,
+			VKOSPI:          vkospi,
+			USDKRW:          usdkrw.Current,
 		}
+
 		if appendErr := AppendRecord(storeDir, date, rec); appendErr != nil {
 			pulse.Errors["store_append"] = appendErr.Error()
 		} else {

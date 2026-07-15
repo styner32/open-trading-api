@@ -33,6 +33,14 @@ func absPercent(numerator float64, denominator float64) *float64 {
 	return ptr(math.Abs(numerator) / math.Abs(denominator) * 100)
 }
 
+func signedPercent(numerator float64, denominator float64) *float64 {
+	if denominator == 0 || math.IsNaN(denominator) || math.IsInf(denominator, 0) {
+		return nil
+	}
+	return ptr(numerator / denominator * 100)
+}
+
+
 func errText(err error) string {
 	if err == nil {
 		return "manual input not provided"

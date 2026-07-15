@@ -29,7 +29,9 @@ type DomesticStock interface {
 type DomesticFuture interface {
 	ResolveNearMonthKOSPI200Futures(context.Context, string) (*domesticfutureoption.ResolvedContract, error)
 	InquirePrice(context.Context, string, string) (*auth.RESTResponse, error)
+	InquireTimeFuopChartPrice(ctx context.Context, marketDivCode, inputISCD, hourClsCode, includePastData, includeFakeTick, inputDate, inputHour string) (*auth.RESTResponse, error)
 }
+
 
 type YahooQuotes interface {
 	GetQuotes(context.Context, []string) (map[string]yahoo.Quote, error)
@@ -61,29 +63,38 @@ type Options struct {
 	ForeignHoldingChangePP         *float64
 	SamsungSKHynixCapRatio         *float64
 	USDKRWMonthStart               *float64
+	OutputDir                      string
+	PulseStoreDir                  string
 }
 
+
 type LateSessionSection struct {
-	BusinessDate                  string  `json:"business_date"`
-	BasisPoint                    float64 `json:"basis_point"`
-	BasisRate                     float64 `json:"basis_rate"`
-	FuturesPrice                  float64 `json:"futures_price"`
-	SpotPrice                     float64 `json:"spot_price"`
-	KOSPINetNonArbitrageForeign   float64 `json:"kospi_net_non_arbitrage_foreign"`
-	KOSPINetNonArbitrageOrgan     float64 `json:"kospi_net_non_arbitrage_organ"`
-	KOSPINetNonArbitrageTotal     float64 `json:"kospi_net_non_arbitrage_total"`
-	LateProgramNetEok             float64 `json:"late_program_net_eok"`
-	CloseSessionProgramNetEok     float64 `json:"close_session_program_net_eok"`
-	CloseSessionForeignNetEok     float64 `json:"close_session_foreign_net_eok"`
-	CloseSessionOrganNetEok       float64 `json:"close_session_organ_net_eok"`
-	PrimaryPattern                string  `json:"primary_pattern"`
-	CapitulationScore             float64 `json:"capitulation_score"`
-	ShortSqueezeScore             float64 `json:"short_squeeze_score"`
-	WindowDressingScore           float64 `json:"window_dressing_score"`
-	RebalancingScore              float64 `json:"rebalancing_score"`
-	ExpirationArbitrageScore      float64 `json:"expiration_arbitrage_score"`
-	PatternDetected               bool    `json:"pattern_detected"`
+	BusinessDate                  string        `json:"business_date"`
+	BasisPoint                    float64       `json:"basis_point"`
+	BasisRate                     float64       `json:"basis_rate"`
+	FuturesPrice                  float64       `json:"futures_price"`
+	SpotPrice                     float64       `json:"spot_price"`
+	FuturesPrice1530              float64       `json:"futures_price_1530,omitempty"`
+	BasisPoint1530                float64       `json:"basis_point_1530,omitempty"`
+
+	KOSPINetNonArbitrageForeign   float64       `json:"kospi_net_non_arbitrage_foreign"`
+	KOSPINetNonArbitrageOrgan     float64       `json:"kospi_net_non_arbitrage_organ"`
+	KOSPINetNonArbitrageTotal     float64       `json:"kospi_net_non_arbitrage_total"`
+	LateProgramNetEok             *float64      `json:"late_program_net_eok"`
+	CloseSessionProgramNetEok     *float64      `json:"close_session_program_net_eok"`
+	CloseSessionForeignNetEok     *float64      `json:"close_session_foreign_net_eok"`
+	CloseSessionOrganNetEok       *float64      `json:"close_session_organ_net_eok"`
+	PrimaryPattern                string        `json:"primary_pattern"`
+	CapitulationScore             float64       `json:"capitulation_score"`
+	ShortSqueezeScore             float64       `json:"short_squeeze_score"`
+	WindowDressingScore           float64       `json:"window_dressing_score"`
+	RebalancingScore              float64       `json:"rebalancing_score"`
+	ExpirationArbitrageScore      float64       `json:"expiration_arbitrage_score"`
+	PatternDetected               bool          `json:"pattern_detected"`
+	Status                        QualityStatus `json:"status,omitempty"`
+	QualityFlags                  []string      `json:"quality_flags,omitempty"`
 }
+
 
 type Snapshot struct {
 	Timestamp     time.Time

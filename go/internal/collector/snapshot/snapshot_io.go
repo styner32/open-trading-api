@@ -140,3 +140,22 @@ func LoadPreviousSnapshot(dir string, targetDate string) (*SnapshotJSON, error) 
 	}
 	return &prev, nil
 }
+
+// LoadSnapshotForDate loads the snapshot JSON for the exact specified date if it exists.
+func LoadSnapshotForDate(dir string, date string) (*SnapshotJSON, error) {
+	normalized := strings.ReplaceAll(date, "-", "")
+	filePath := filepath.Join(dir, fmt.Sprintf("market_snapshot.%s.json", normalized))
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var s SnapshotJSON
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+

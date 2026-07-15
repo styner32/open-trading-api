@@ -92,6 +92,10 @@ func (f fakeFuture) ResolveNearMonthKOSPI200Futures(context.Context, string) (*d
 func (f fakeFuture) InquirePrice(context.Context, string, string) (*auth.RESTResponse, error) {
 	return f.resp, nil
 }
+func (f fakeFuture) InquireTimeFuopChartPrice(ctx context.Context, marketDivCode, inputISCD, hourClsCode, includePastData, includeFakeTick, inputDate, inputHour string) (*auth.RESTResponse, error) {
+	return f.resp, nil
+}
+
 
 type fakeYahoo struct {
 	quotes map[string]yahoo.Quote
@@ -170,9 +174,10 @@ func TestImpactComputesRatiosAndSidecar(t *testing.T) {
 			got := collectImpact(context.Background(), Deps{DomesticStock: stock, DomesticFuture: futures}, "20260515", &FlowSection{ForeignEok: -48342}, &PriceSection{TradingValueEok: 200_000}, Options{
 				SidecarStatus: "triggered", SidecarTime: "13:28:49", SemiconductorForeignNetSellEok: &semiSell,
 			})
-			if got.ForeignSellMarketCapPercent == nil || *got.ForeignSellMarketCapPercent < 0.68 {
-				t.Fatalf("foreign sell ratio = %+v", got.ForeignSellMarketCapPercent)
+			if got.ForeignNetFlowToMarketCap == nil || *got.ForeignNetFlowToMarketCap > -0.67 || *got.ForeignNetFlowToMarketCap < -0.69 {
+				t.Fatalf("foreign sell ratio = %+v", got.ForeignNetFlowToMarketCap)
 			}
+
 			if got.SemiconductorSellConcentrationPct == nil || *got.SemiconductorSellConcentrationPct < 86 {
 				t.Fatalf("semiconductor ratio = %+v", got.SemiconductorSellConcentrationPct)
 			}
@@ -215,7 +220,7 @@ func TestVolatilityPrefersKISAndUsesOppositeDirectionForDecoupling(t *testing.T)
 		},
 	}
 	naverClient := fakeNaver{quote: &naver.IndexQuote{Price: 99, ChangePercent: -20}}
-	got := collectVolatility(context.Background(), stock, naverClient, fakeYahoo{}, -3)
+	got := collectVolatility(context.Background(), stock, naverClient, fakeYahoo{}, -3, "20260710", Options{})
 	if got.VKOSPI != 28.5 || got.Source != "KIS" {
 		t.Fatalf("expected KIS VKOSPI 28.5, got %+v", got)
 	}
@@ -323,7 +328,7 @@ func TestLateSession(t *testing.T) {
 			Close: 90.1,
 		}
 
-		got, err := collectLateSession(context.Background(), deps, "20260515", priceSec)
+		got, err := collectLateSession(context.Background(), deps, "20260515", priceSec, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -340,14 +345,14 @@ func TestLateSession(t *testing.T) {
 		if got.KOSPINetNonArbitrageForeign != -400.0 {
 			t.Errorf("expected non-arbitrage foreign -400.0, got %.2f", got.KOSPINetNonArbitrageForeign)
 		}
-		if got.LateProgramNetEok != -800.0 {
-			t.Errorf("expected late program flow -800.0, got %.2f", got.LateProgramNetEok)
+		if got.LateProgramNetEok == nil || *got.LateProgramNetEok != -800.0 {
+			t.Errorf("expected late program flow -800.0, got %v", got.LateProgramNetEok)
 		}
-		if got.CloseSessionProgramNetEok != -400.0 {
-			t.Errorf("expected close session program -400.0, got %.2f", got.CloseSessionProgramNetEok)
+		if got.CloseSessionProgramNetEok == nil || *got.CloseSessionProgramNetEok != -400.0 {
+			t.Errorf("expected close session program -400.0, got %v", got.CloseSessionProgramNetEok)
 		}
-		if got.CloseSessionForeignNetEok != -300.0 {
-			t.Errorf("expected close session foreign -300.0, got %.2f", got.CloseSessionForeignNetEok)
+		if got.CloseSessionForeignNetEok == nil || *got.CloseSessionForeignNetEok != -300.0 {
+			t.Errorf("expected close session foreign -300.0, got %v", got.CloseSessionForeignNetEok)
 		}
 		if !got.PatternDetected {
 			t.Errorf("expected PatternDetected to be true, got false")
@@ -381,7 +386,7 @@ func TestLateSession(t *testing.T) {
 		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
 		priceSec := &PriceSection{High: 100, Low: 90, Close: 99.9}
 
-		got, err := collectLateSession(context.Background(), deps, "20260515", priceSec)
+		got, err := collectLateSession(context.Background(), deps, "20260515", priceSec, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -418,7 +423,7 @@ func TestLateSession(t *testing.T) {
 		priceSec := &PriceSection{High: 100, Low: 90, Close: 99.5}
 
 		// 20260630: Quarter End (June 30)
-		got, err := collectLateSession(context.Background(), deps, "20260630", priceSec)
+		got, err := collectLateSession(context.Background(), deps, "20260630", priceSec, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -455,7 +460,7 @@ func TestLateSession(t *testing.T) {
 		priceSec := &PriceSection{High: 100, Low: 90, Close: 95.0}
 
 		// 20260528: Rebalancing Day (>= 25 of May)
-		got, err := collectLateSession(context.Background(), deps, "20260528", priceSec)
+		got, err := collectLateSession(context.Background(), deps, "20260528", priceSec, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -492,7 +497,7 @@ func TestLateSession(t *testing.T) {
 		priceSec := &PriceSection{High: 100, Low: 90, Close: 95.0}
 
 		// 20260611: Expiration Day (second Thursday of June)
-		got, err := collectLateSession(context.Background(), deps, "20260611", priceSec)
+		got, err := collectLateSession(context.Background(), deps, "20260611", priceSec, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -685,7 +690,7 @@ func TestEBAGatesAndStaleDatesAndMeltdownRegime(t *testing.T) {
 		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
 		priceSec := &PriceSection{High: 100, Low: 90, Close: 95.0}
 
-		got, err := collectLateSession(context.Background(), deps, "20260702", priceSec)
+		got, err := collectLateSession(context.Background(), deps, "20260702", priceSec, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -709,7 +714,7 @@ func TestEBAGatesAndStaleDatesAndMeltdownRegime(t *testing.T) {
 		deps := Deps{DomesticStock: stock, DomesticFuture: futures}
 		priceSec := &PriceSection{High: 100, Low: 90, Close: 95.0}
 
-		got, err := collectLateSession(context.Background(), deps, "20260611", priceSec)
+		got, err := collectLateSession(context.Background(), deps, "20260611", priceSec, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -729,14 +734,14 @@ func TestEBAGatesAndStaleDatesAndMeltdownRegime(t *testing.T) {
 			SidecarStatus: "triggered",
 		}
 
-		phase := classifyPhase(price, impact, nil)
+		phase := classifyPhase(price, impact, nil, nil)
 		if !strings.Contains(phase, "패닉") {
 			t.Errorf("Expected panic phase for market crash, got %q", phase)
 		}
 
-		risk := calcRiskAversionIdx(price, nil, impact, 0.64, nil)
-		if risk < 8.0 {
-			t.Errorf("Expected risk index floor to be >= 8.0 on crash day, got %.1f", risk)
+		reg := collectRegime(context.Background(), fakeYahoo{}, price, nil, impact, nil, nil)
+		if reg.DomesticMarketStressIdx < 8.0 {
+			t.Errorf("Expected domestic market stress floor to be >= 8.0 on crash day, got %.1f", reg.DomesticMarketStressIdx)
 		}
 	})
 

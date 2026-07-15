@@ -59,6 +59,17 @@ func TrillionFromEok(v float64) string {
 	return Signed(v/10000, 1) + "조원"
 }
 
+// TrillionFromEokPlain formats Eok amount in trillions of KRW without leading sign.
+func TrillionFromEokPlain(v float64) string {
+	return Number(v/10000, 1) + "조원"
+}
+
+// EokPlain formats float64 to Eok (round and display as unsigned integer).
+func EokPlain(v float64) string {
+	return Number(math.Round(v), 0)
+}
+
+
 // Arrow returns sign arrow indicator ("▲+", "▼", " ").
 func Arrow(v float64) string {
 	if v > 0 {

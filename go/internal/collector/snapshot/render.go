@@ -2,7 +2,6 @@ package snapshot
 
 import (
 	"fmt"
-	"math"
 	"strings"
 )
 
@@ -104,12 +103,17 @@ func renderImpact(b *strings.Builder, s *Snapshot) {
 		return
 	}
 	tvLine := na(i.ForeignSellTradingValueReason)
-	if i.ForeignSellTradingValuePercent != nil {
-		tvLine = percentPlain(*i.ForeignSellTradingValuePercent) + " [" + i.ForeignSellTradingValueLabel + "]"
+	if i.ForeignNetFlowToTradingValue != nil {
+		tvLine = signedNumber(*i.ForeignNetFlowToTradingValue, 2) + "% [" + i.ForeignSellTradingValueLabel + "]"
 	}
-	b.WriteString("- 외인 거래대금 비중: " + tvLine + "\n")
-	b.WriteString("  - 임계값: <10% 정상, 10~20% 주의, >20% 위험\n")
-	b.WriteString("- 시총 대비 외인 매도: " + valuePercent(i.ForeignSellMarketCapPercent, i.ForeignSellReason) + " (참고)\n")
+	b.WriteString("- 외국인 순수급/거래대금: " + tvLine + "\n")
+	b.WriteString("  - 임계값: |순수급/거래대금| <10% 정상, 10~20% 주의, >20% 위험\n")
+	
+	mcVal := valuePercent(i.ForeignNetFlowToMarketCap, i.ForeignSellReason)
+	if i.ForeignNetFlowToMarketCap != nil {
+		mcVal = signedNumber(*i.ForeignNetFlowToMarketCap, 3) + "%"
+	}
+	b.WriteString("- 외국인 순수급/시가총액: " + mcVal + " (참고)\n")
 	semiconductor := valuePercent(i.SemiconductorSellConcentrationPct, i.SemiconductorReason)
 	if i.SemiconductorSellConcentrationPct != nil {
 		semiconductor += " (외인 매도의)"
@@ -118,10 +122,7 @@ func renderImpact(b *strings.Builder, s *Snapshot) {
 	b.WriteString("- 코스피200 선물 변동률: " + quotePercent(i.FuturesChangePercent, i.FuturesReason) + "\n")
 	// 베이시스: Section 11 (LateSession)에서 KOSPI200 코드 "2001"로 정확히 계산한 값 참조
 	if s.LateSession != nil && s.LateSession.SpotPrice > 0 {
-		basisText := fmt.Sprintf("%sp (%s)", number(s.LateSession.BasisPoint, 1), percent(s.LateSession.BasisRate))
-		if math.Abs(s.LateSession.BasisPoint) >= 2.0 {
-			basisText += " ⚠ (베이시스 괴리 과다)"
-		}
+		basisText := fmt.Sprintf("%sp (%s) (판정 보류 — 이론 베이시스 미수집)", signedNumber(s.LateSession.BasisPoint, 1), percent(s.LateSession.BasisRate))
 		b.WriteString(fmt.Sprintf("- 선물-현물 베이시스: %s — Section 11 참조\n", basisText))
 	} else {
 		b.WriteString("- 선물-현물 베이시스: Section 11 참조\n")
@@ -137,8 +138,14 @@ func renderImpact(b *strings.Builder, s *Snapshot) {
 
 
 func renderGlobal(b *strings.Builder, s *Snapshot) {
-	b.WriteString("## 4. 글로벌 동조성 (전일 대비)\n| 자산 | 변동률 |\n|---|---|\n")
-	for _, item := range []struct{ label, symbol string }{{"닛케이225", "^N225"}, {"나스닥 선물", "NQ=F"}, {"WTI 유가", "CL=F"}, {"BTC", "BTC-USD"}, {"USD/KRW", "KRW=X"}} {
+	b.WriteString("## 4. 글로벌 동조성 (전일 대비)\n| 자산 | 변동률 | 비교 기준 | 기준 시각 |\n|---|---|---|---|\n")
+	for _, item := range []struct{ label, symbol, basis, timeStr string }{
+		{"닛케이225", "^N225", "전일 종가", "15:00 JST"},
+		{"나스닥 선물", "NQ=F", "전일 선물 정산가", "실시간"},
+		{"WTI 유가", "CL=F", "전일 정산가", "실시간"},
+		{"BTC", "BTC-USD", "24시간 전", "실시간"},
+		{"USD/KRW", "KRW=X", "전일 서울 종가", "실시간"},
+	} {
 		value := na(sectionErr(s, "global"))
 		if s.Global != nil {
 			if q, ok := s.Global.Quotes[item.symbol]; ok {
@@ -150,7 +157,7 @@ func renderGlobal(b *strings.Builder, s *Snapshot) {
 				value = na(s.Global.Reason)
 			}
 		}
-		b.WriteString(fmt.Sprintf("| %s | %s |\n", item.label, value))
+		b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", item.label, value, item.basis, item.timeStr))
 	}
 	b.WriteString("\n")
 }

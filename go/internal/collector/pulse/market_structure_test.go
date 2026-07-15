@@ -91,7 +91,7 @@ var _ = Describe("market structure collectors", func() {
 
 	It("CB는 하락 방향만 계산하고 저점 기준 근접도를 보존", func() {
 		idx := IndexLevel{PrevClose: 8303.45, Price: 7844.28, Low: 7723.57, ChangePct: -5.53, OK: true}
-		safety := buildMarketSafety(idx, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{})
+		safety := buildMarketSafety(idx, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{}, nil)
 		Expect(safety.CircuitBreakers).To(HaveLen(1))
 		phase1 := safety.CircuitBreakers[0].Levels[0]
 		Expect(phase1.CurrentGapPct).To(BeNumerically("~", 2.47, 0.01))
@@ -100,7 +100,7 @@ var _ = Describe("market structure collectors", func() {
 
 		// 상승 시 시나리오 (+5.17% 일 때 -8% 임계까지의 거리는 13.17%p)
 		idxPositive := IndexLevel{PrevClose: 1000.0, Price: 1051.7, Low: 1020.0, ChangePct: 5.17, OK: true}
-		safetyPos := buildMarketSafety(idxPositive, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{})
+		safetyPos := buildMarketSafety(idxPositive, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{}, nil)
 		Expect(safetyPos.CircuitBreakers).To(HaveLen(1))
 		phase1Pos := safetyPos.CircuitBreakers[0].Levels[0]
 		Expect(phase1Pos.CurrentGapPct).To(BeNumerically("~", 13.17, 0.01))
@@ -109,10 +109,11 @@ var _ = Describe("market structure collectors", func() {
 
 	It("KOSDAQ 사이드카는 선물과 현물 조건을 같은 방향으로 모두 요구", func() {
 		f := IndexFutureSnapshot{Code: "A06609", ChangePct: -6.2, SpotChangePct: -3.1, OK: true}
-		got := buildSidecar("KOSDAQ", f, 6, 3)
+		got := buildSidecar("KOSDAQ", f, 6, 3, nil)
 		Expect(got.ThresholdReached).To(BeTrue())
 		f.SpotChangePct = 3.1
-		Expect(buildSidecar("KOSDAQ", f, 6, 3).ThresholdReached).To(BeFalse())
+		Expect(buildSidecar("KOSDAQ", f, 6, 3, nil).ThresholdReached).To(BeFalse())
+
 	})
 
 	It("시총 상위 종목의 추정 포인트 기여도를 계산", func() {
