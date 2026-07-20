@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/kis-open-api/go/internal/auth"
 	"github.com/kis-open-api/go/internal/parse"
@@ -16,7 +17,7 @@ type flowStock interface {
 // 현재까지 누적된 수급 스냅샷을 가져옵니다.
 // marketDiv: "KSP" (KOSPI) 또는 "KSQ" (KOSDAQ)
 // indexDiv : "0001" (KOSPI) 또는 "1001" (KOSDAQ)
-func collectFlow(ctx context.Context, stock flowStock, marketDiv, indexDiv string) (FlowSnapshot, error) {
+func collectFlow(ctx context.Context, stock flowStock, marketDiv, indexDiv string, now time.Time) (FlowSnapshot, error) {
 	resp, err := stock.InquireInvestorTimeByMarket(ctx, marketDiv, indexDiv)
 	if err != nil {
 		return FlowSnapshot{}, fmt.Errorf("inquire-investor-time-by-market (%s): %w", marketDiv, err)
@@ -43,6 +44,8 @@ func collectFlow(ctx context.Context, stock flowStock, marketDiv, indexDiv strin
 		Insurance:   get("insu_ntby_tr_pbmn"),
 		Bank:        get("bank_ntby_tr_pbmn"),
 		EtcCorp:     get("etc_corp_ntby_tr_pbmn"),
+		EtcForeign:  get("etc_frgn_ntby_tr_pbmn"),
+		EtcFin:      get("mrbn_ntby_tr_pbmn"),
 		OK:          true,
 	}, nil
 }

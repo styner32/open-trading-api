@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -42,18 +43,18 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(6)
-	g.Go(func() error { kospiFlow, kospiFlowErr = collectFlow(gctx, deps.Stock, "KSP", "0001"); return nil })
-	g.Go(func() error { kosdaqFlow, kosdaqFlowErr = collectFlow(gctx, deps.Stock, "KSQ", "1001"); return nil })
-	g.Go(func() error { kospiIdx, kospiIdxErr = collectIndex(gctx, deps.Stock, "0001"); return nil })
-	g.Go(func() error { kosdaqIdx, kosdaqIdxErr = collectIndex(gctx, deps.Stock, "1001"); return nil })
+	g.Go(func() error { kospiFlow, kospiFlowErr = collectFlow(gctx, deps.Stock, "KSP", "0001", now); return nil })
+	g.Go(func() error { kosdaqFlow, kosdaqFlowErr = collectFlow(gctx, deps.Stock, "KSQ", "1001", now); return nil })
+	g.Go(func() error { kospiIdx, kospiIdxErr = collectIndex(gctx, deps.Stock, "0001", now); return nil })
+	g.Go(func() error { kosdaqIdx, kosdaqIdxErr = collectIndex(gctx, deps.Stock, "1001", now); return nil })
 	g.Go(func() error { kospiProgram, kospiProgramErr = collectProgramTrade(gctx, deps.Stock, "K"); return nil })
 	g.Go(func() error { kosdaqProgram, kosdaqProgramErr = collectProgramTrade(gctx, deps.Stock, "Q"); return nil })
 	g.Go(func() error {
-		kospi200Future, kospiFutureErr = collectIndexFuture(gctx, deps.Future, pulse.BusinessDate, "KOSPI200")
-		kosdaq150Future, kosdaqFutureErr = collectIndexFuture(gctx, deps.Future, pulse.BusinessDate, "KOSDAQ150")
+		kospi200Future, kospiFutureErr = collectIndexFuture(gctx, deps.Future, pulse.BusinessDate, "KOSPI200", now)
+		kosdaq150Future, kosdaqFutureErr = collectIndexFuture(gctx, deps.Future, pulse.BusinessDate, "KOSDAQ150", now)
 		return nil
 	})
-	g.Go(func() error { vkospi, vkospiErr = collectVKOSPI(gctx, deps.Stock, deps.Naver); return nil })
+	g.Go(func() error { vkospi, vkospiErr = collectVKOSPI(gctx, deps.Stock, deps.Naver, now); return nil })
 	g.Go(func() error { wins = collectMarket(gctx, deps.Yahoo, now, marketErrors); return nil })
 	_ = g.Wait()
 
@@ -102,45 +103,125 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
 		pulse.Errors["store_load"] = loadErr.Error()
 	}
 	pulse.StoredCount = len(records)
+	var prevRec, anchorRec *PulseRecord
 	if len(records) > 0 {
-		t := records[len(records)-1].TS
-		pulse.PrevTS = &t
+		prevRec = &records[len(records)-1]
+		anchorRec = &records[0]
+		pulse.PrevTS = &prevRec.TS
 	}
+
+	// 수급 델타 분할 계산 (Prev, Anchor, 1h, 2h)
+	kospiFlowDeltaPrev := computeSingleFlowDelta(prevRec, kospiFlow, kospiIdx.Price, now, "kospi")
+	kosdaqFlowDeltaPrev := computeSingleFlowDelta(prevRec, kosdaqFlow, kosdaqIdx.Price, now, "kosdaq")
+
+	kospiFlowDeltaAnchor := computeSingleFlowDelta(anchorRec, kospiFlow, kospiIdx.Price, now, "kospi")
+	kosdaqFlowDeltaAnchor := computeSingleFlowDelta(anchorRec, kosdaqFlow, kosdaqIdx.Price, now, "kosdaq")
 
 	kospiFlowDelta1h, kospiFlowDelta2h := computeFlowDeltas(records, now, kospiFlow, kospiIdx.Price, "kospi")
 	kosdaqFlowDelta1h, kosdaqFlowDelta2h := computeFlowDeltas(records, now, kosdaqFlow, kosdaqIdx.Price, "kosdaq")
-	kospiProgramDelta := computeProgramDelta(records, now, kospiProgram, "kospi")
-	kosdaqProgramDelta := computeProgramDelta(records, now, kosdaqProgram, "kosdaq")
-	basisDelta1h := computeBasisDelta(records, now, kospi200Future, 1)
-	basisDelta2h := computeBasisDelta(records, now, kospi200Future, 2)
+
+	// 프로그램 매매 델타 분할 계산 (Prev, Anchor, 1h, 2h)
+	kospiProgramDeltaPrev := computeProgramDeltaForRef(prevRec, kospiProgram, now, "kospi")
+	kosdaqProgramDeltaPrev := computeProgramDeltaForRef(prevRec, kosdaqProgram, now, "kosdaq")
+
+	kospiProgramDeltaAnchor := computeProgramDeltaForRef(anchorRec, kospiProgram, now, "kospi")
+	kosdaqProgramDeltaAnchor := computeProgramDeltaForRef(anchorRec, kosdaqProgram, now, "kosdaq")
+
+	var prev1h = LoadNearest(records, now.Add(-time.Hour))
+	var prev2h = LoadNearest(records, now.Add(-2*time.Hour))
+	kospiProgramDelta1h := computeProgramDeltaForRef(prev1h, kospiProgram, now, "kospi")
+	kospiProgramDelta2h := computeProgramDeltaForRef(prev2h, kospiProgram, now, "kospi")
+	kosdaqProgramDelta1h := computeProgramDeltaForRef(prev1h, kosdaqProgram, now, "kosdaq")
+	kosdaqProgramDelta2h := computeProgramDeltaForRef(prev2h, kosdaqProgram, now, "kosdaq")
+
+	// 베이시스 델타 분할 계산
+	computeBasisDeltaForRef := func(prev *PulseRecord, cur IndexFutureSnapshot, now time.Time) *BasisDelta {
+		if prev == nil || !prev.KOSPI200Future.OK || !cur.OK {
+			return nil
+		}
+		return &BasisDelta{
+			RefTS: prev.TS,
+			Elapsed: now.Sub(prev.TS).Minutes(),
+			Value: cur.Basis - prev.KOSPI200Future.Basis,
+		}
+	}
+	basisDeltaPrev := computeBasisDeltaForRef(prevRec, kospi200Future, now)
+	basisDeltaAnchor := computeBasisDeltaForRef(anchorRec, kospi200Future, now)
+	basisDelta1h := computeBasisDeltaForRef(prev1h, kospi200Future, now)
+	basisDelta2h := computeBasisDeltaForRef(prev2h, kospi200Future, now)
+
+
+	// Let's refine the residual calculations:
+	if kospiFlow.OK {
+		kospiTotalSum := kospiFlow.Individual + kospiFlow.Foreign + kospiFlow.Institution + kospiFlow.EtcCorp + kospiFlow.EtcForeign
+		kospiResTotal := math.Abs(kospiTotalSum)
+		kospiInstSum := kospiFlow.FinInvest + kospiFlow.InvTrust + kospiFlow.Pension + kospiFlow.PrivEquity + kospiFlow.Insurance + kospiFlow.Bank + kospiFlow.EtcFin
+		kospiResInst := math.Abs(kospiFlow.Institution - kospiInstSum)
+
+		if kospiResTotal > 10.0 {
+			pulse.Errors["kospi_flow_residual"] = fmt.Sprintf("KOSPI 수급 합계 불일치 잔차 %.2f억원 (>10억원)", kospiTotalSum)
+		}
+		if kospiResInst > 10.0 {
+			pulse.Errors["kospi_inst_residual"] = fmt.Sprintf("KOSPI 기관 세부합계 불일치 잔차 %.2f억원 (>10억원)", kospiFlow.Institution - kospiInstSum)
+		}
+	}
+	if kosdaqFlow.OK {
+		kosdaqTotalSum := kosdaqFlow.Individual + kosdaqFlow.Foreign + kosdaqFlow.Institution + kosdaqFlow.EtcCorp + kosdaqFlow.EtcForeign
+		kosdaqResTotal := math.Abs(kosdaqTotalSum)
+		kosdaqInstSum := kosdaqFlow.FinInvest + kosdaqFlow.InvTrust + kosdaqFlow.Pension + kosdaqFlow.PrivEquity + kosdaqFlow.Insurance + kosdaqFlow.Bank + kosdaqFlow.EtcFin
+		kosdaqResInst := math.Abs(kosdaqFlow.Institution - kosdaqInstSum)
+
+		if kosdaqResTotal > 10.0 {
+			pulse.Errors["kosdaq_flow_residual"] = fmt.Sprintf("KOSDAQ 수급 합계 불일치 잔차 %.2f억원 (>10억원)", kosdaqTotalSum)
+		}
+		if kosdaqResInst > 10.0 {
+			pulse.Errors["kosdaq_inst_residual"] = fmt.Sprintf("KOSDAQ 기관 세부합계 불일치 잔차 %.2f억원 (>10억원)", kosdaqFlow.Institution - kosdaqInstSum)
+		}
+	}
 
 	// ── 6. 시장 구조체 조립 ─────────────────────────────────────────────────
 	pulse.KOSPI = Market{
-		Name:        "KOSPI",
-		Index:       kospiIdx,
-		IntradayWin: kospiWin,
-		Flow:        kospiFlow,
-		FlowDelta1h: kospiFlowDelta1h,
-		FlowDelta2h: kospiFlowDelta2h,
+		Name:            "KOSPI",
+		Index:           kospiIdx,
+		IntradayWin:     kospiWin,
+		Flow:            kospiFlow,
+		FlowDeltaPrev:   kospiFlowDeltaPrev,
+		FlowDeltaAnchor: kospiFlowDeltaAnchor,
+		FlowDelta1h:     kospiFlowDelta1h,
+		FlowDelta2h:     kospiFlowDelta2h,
 	}
 	pulse.KOSDAQ = Market{
-		Name:        "KOSDAQ",
-		Index:       kosdaqIdx,
-		IntradayWin: kosdaqWin,
-		Flow:        kosdaqFlow,
-		FlowDelta1h: kosdaqFlowDelta1h,
-		FlowDelta2h: kosdaqFlowDelta2h,
+		Name:            "KOSDAQ",
+		Index:           kosdaqIdx,
+		IntradayWin:     kosdaqWin,
+		Flow:            kosdaqFlow,
+		FlowDeltaPrev:   kosdaqFlowDeltaPrev,
+		FlowDeltaAnchor: kosdaqFlowDeltaAnchor,
+		FlowDelta1h:     kosdaqFlowDelta1h,
+		FlowDelta2h:     kosdaqFlowDelta2h,
 	}
 	pulse.KOSPIProgram = kospiProgram
 	pulse.KOSDAQProgram = kosdaqProgram
-	pulse.KOSPIProgramDelta = kospiProgramDelta
-	pulse.KOSDAQProgramDelta = kosdaqProgramDelta
+	pulse.KOSPIProgramDelta = kospiProgramDelta1h // Legacy compat
+	pulse.KOSPIProgramDeltaPrev = kospiProgramDeltaPrev
+	pulse.KOSPIProgramDeltaAnchor = kospiProgramDeltaAnchor
+	pulse.KOSPIProgramDelta1h = kospiProgramDelta1h
+	pulse.KOSPIProgramDelta2h = kospiProgramDelta2h
+
+	pulse.KOSDAQProgramDelta = kosdaqProgramDelta1h // Legacy compat
+	pulse.KOSDAQProgramDeltaPrev = kosdaqProgramDeltaPrev
+	pulse.KOSDAQProgramDeltaAnchor = kosdaqProgramDeltaAnchor
+	pulse.KOSDAQProgramDelta1h = kosdaqProgramDelta1h
+	pulse.KOSDAQProgramDelta2h = kosdaqProgramDelta2h
+
 	pulse.KOSPI200Future = kospi200Future
 	pulse.KOSDAQ150Future = kosdaq150Future
-	pulse.BasisDelta1h = basisDelta1h
-	pulse.BasisDelta2h = basisDelta2h
+	pulse.BasisDelta1h = basisDelta1h // Legacy compat
+	pulse.BasisDelta2h = basisDelta2h // Legacy compat
+	pulse.BasisDeltaPrev = basisDeltaPrev
+	pulse.BasisDeltaAnchor = basisDeltaAnchor
 	pulse.VKOSPI = vkospi
-	pulse.Safety = buildMarketSafety(kospiIdx, kosdaqIdx, kospi200Future, kosdaq150Future, records)
+	pulse.Safety = buildMarketSafety(now, date, kospiIdx, kosdaqIdx, kospi200Future, kosdaq150Future, records)
 	pulse.Contributions = contributions
 	pulse.USDKRW = usdkrw
 	pulse.Macro = macroWins
@@ -280,4 +361,52 @@ func SaveMD(opts Options, date, content string) error {
 		return err
 	}
 	return os.WriteFile(pulseMDPath(dir, date), []byte(content), 0o644)
+}
+
+func computeSingleFlowDelta(prevRec *PulseRecord, cur FlowSnapshot, curIdx float64, now time.Time, market string) *FlowDelta {
+	if prevRec == nil || !cur.OK {
+		return nil
+	}
+	var prevFlow FlowSnapshot
+	var prevIdx float64
+	if market == "kospi" {
+		prevFlow = prevRec.KOSPIFlow
+		prevIdx = prevRec.KOSPIIdx
+	} else {
+		prevFlow = prevRec.KOSDAQFlow
+		prevIdx = prevRec.KOSDAQIdx
+	}
+	if !prevFlow.OK {
+		return nil
+	}
+	return &FlowDelta{
+		RefTS:       prevRec.TS,
+		Elapsed:     now.Sub(prevRec.TS).Minutes(),
+		Foreign:     cur.Foreign - prevFlow.Foreign,
+		Institution: cur.Institution - prevFlow.Institution,
+		Individual:  cur.Individual - prevFlow.Individual,
+		IndexDelta:  curIdx - prevIdx,
+	}
+}
+
+func computeProgramDeltaForRef(prevRec *PulseRecord, cur ProgramTradeSnapshot, now time.Time, market string) *ProgramTradeDelta {
+	if prevRec == nil || !cur.OK {
+		return nil
+	}
+	var previous ProgramTradeSnapshot
+	if market == "kospi" {
+		previous = prevRec.KOSPIProgram
+	} else {
+		previous = prevRec.KOSDAQProgram
+	}
+	if !previous.OK {
+		return nil
+	}
+	return &ProgramTradeDelta{
+		RefTS:        prevRec.TS,
+		Elapsed:      now.Sub(prevRec.TS).Minutes(),
+		Arbitrage:    cur.Arbitrage - previous.Arbitrage,
+		NonArbitrage: cur.NonArbitrage - previous.NonArbitrage,
+		Total:        cur.Total - previous.Total,
+	}
 }

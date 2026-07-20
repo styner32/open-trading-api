@@ -83,7 +83,7 @@ var _ = Describe("market structure collectors", func() {
 			"output1": map[string]any{"futs_prpr": "1300.15", "futs_prdy_clpr": "1381.40", "futs_prdy_ctrt": "-5.88", "mrkt_basis": "1.13"},
 			"output3": map[string]any{"bstp_nmix_prpr": "1299.02", "bstp_nmix_prdy_ctrt": "-5.80"},
 		}}
-		got, err := collectIndexFuture(context.Background(), futureFake{resp}, "20260702", "KOSPI200")
+		got, err := collectIndexFuture(context.Background(), futureFake{resp}, "20260702", "KOSPI200", time.Now())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Basis).To(BeNumerically("~", 1.13, 0.001))
 		Expect(got.BasisMatch).To(BeTrue())
@@ -91,7 +91,7 @@ var _ = Describe("market structure collectors", func() {
 
 	It("CB는 하락 방향만 계산하고 저점 기준 근접도를 보존", func() {
 		idx := IndexLevel{PrevClose: 8303.45, Price: 7844.28, Low: 7723.57, ChangePct: -5.53, OK: true}
-		safety := buildMarketSafety(idx, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{}, nil)
+		safety := buildMarketSafety(time.Now(), "20260702", idx, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{}, nil)
 		Expect(safety.CircuitBreakers).To(HaveLen(1))
 		phase1 := safety.CircuitBreakers[0].Levels[0]
 		Expect(phase1.CurrentGapPct).To(BeNumerically("~", 2.47, 0.01))
@@ -100,7 +100,7 @@ var _ = Describe("market structure collectors", func() {
 
 		// 상승 시 시나리오 (+5.17% 일 때 -8% 임계까지의 거리는 13.17%p)
 		idxPositive := IndexLevel{PrevClose: 1000.0, Price: 1051.7, Low: 1020.0, ChangePct: 5.17, OK: true}
-		safetyPos := buildMarketSafety(idxPositive, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{}, nil)
+		safetyPos := buildMarketSafety(time.Now(), "20260702", idxPositive, IndexLevel{}, IndexFutureSnapshot{}, IndexFutureSnapshot{}, nil)
 		Expect(safetyPos.CircuitBreakers).To(HaveLen(1))
 		phase1Pos := safetyPos.CircuitBreakers[0].Levels[0]
 		Expect(phase1Pos.CurrentGapPct).To(BeNumerically("~", 13.17, 0.01))
@@ -135,7 +135,7 @@ var _ = Describe("market structure collectors", func() {
 		resp := &auth.RESTResponse{Body: map[string]any{"output": map[string]any{
 			"bstp_nmix_prpr": "28.50", "bstp_nmix_prdy_ctrt": "12.30",
 		}}}
-		got, err := collectVKOSPI(context.Background(), vkospiFake{resp}, nil)
+		got, err := collectVKOSPI(context.Background(), vkospiFake{resp}, nil, time.Now())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Source).To(Equal("KIS"))
 		Expect(got.Value).To(Equal(28.5))

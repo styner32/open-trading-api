@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/kis-open-api/go/internal/auth"
 	"github.com/kis-open-api/go/internal/parse"
@@ -15,7 +16,7 @@ type indexStock interface {
 
 // collectIndex는 KIS inquire-index-price (TRID FHPUP02100000)로 지수 현황을 가져옵니다.
 // indexCode: "0001" (KOSPI), "1001" (KOSDAQ)
-func collectIndex(ctx context.Context, stock indexStock, indexCode string) (IndexLevel, error) {
+func collectIndex(ctx context.Context, stock indexStock, indexCode string, now time.Time) (IndexLevel, error) {
 	resp, err := stock.InquireIndexPrice(ctx, indexCode)
 	if err != nil {
 		return IndexLevel{}, fmt.Errorf("inquire-index-price (%s): %w", indexCode, err)
@@ -50,6 +51,18 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string) (Inde
 
 	tradingValue := get("acml_tr_pbmn") / millionToEok // 백만원 → 억원
 
+	// Time / Freshness calculation
+	nowKST := now.In(kstLocation)
+	kst330 := time.Date(nowKST.Year(), nowKST.Month(), nowKST.Day(), 15, 30, 0, 0, kstLocation)
+	var lastTS time.Time
+	if nowKST.After(kst330) {
+		lastTS = kst330
+	} else {
+		lastTS = now
+	}
+
+	freshness, ageSecs, staleReason := DetermineFreshness("KRX", lastTS, now, false)
+
 	return IndexLevel{
 		Price:        price,
 		PrevClose:    prevClose,
@@ -62,5 +75,10 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string) (Inde
 		Decliners:    getInt("down_issu_cnt"),
 		Unchanged:    getInt("stnr_issu_cnt"),
 		OK:           true,
+		LastTS:       lastTS,
+		FetchedAt:    now,
+		Freshness:    freshness,
+		AgeSeconds:   ageSecs,
+		StaleReason:  staleReason,
 	}, nil
 }

@@ -79,6 +79,25 @@ func collectMarket(ctx context.Context, yahooClient YahooQuotes, now time.Time, 
 	return result
 }
 
+func symbolVenue(sym string) string {
+	switch sym {
+	case "^KS11", "^KQ11":
+		return "KRX"
+	case "KRW=X":
+		return "USD/KRW"
+	case "NQ=F", "ES=F", "YM=F":
+		return "CME"
+	case "CL=F":
+		return "NYMEX"
+	case "^TNX":
+		return "CBOE"
+	case "^N225":
+		return "JPX"
+	default:
+		return "OTHER"
+	}
+}
+
 // buildWindow는 분봉 시리즈 + 현재가로 Window를 계산합니다.
 // §6.1 알고리즘: 절대 unix 타임스탬프 기준 at-or-before 선택.
 func buildWindow(symbol, label string, quote yahoo.Quote, series []yahoo.DailyClose, now time.Time) Window {
@@ -105,6 +124,29 @@ func buildWindow(symbol, label string, quote yahoo.Quote, series []yahoo.DailyCl
 		win.LastTS = time.Unix(lastItem.DateUnix, 0)
 	} else if quote.MarketTimeUnix > 0 {
 		win.LastTS = time.Unix(quote.MarketTimeUnix, 0)
+	}
+
+	win.FetchedAt = now
+	venue := symbolVenue(symbol)
+	nowKST := now.In(kstLocation)
+	isHoliday := IsHoliday(venue, nowKST.Format("20060102"))
+
+	freshness, ageSecs, staleReason := DetermineFreshness(venue, win.LastTS, now, isHoliday)
+	win.Freshness = freshness
+	win.AgeSeconds = ageSecs
+	if staleReason != "" {
+		win.StaleReason = staleReason
+	}
+
+	if win.Freshness == "HOLIDAY" || win.Freshness == "STALE" {
+		win.Move1hPct = nil
+		win.Move2hPct = nil
+		if win.Freshness == "HOLIDAY" {
+			win.Reason = fmt.Sprintf("%s %s 휴장 · 1h/2h N/A · 신호점수 제외", nowKST.Format("2006-01-02"), label)
+		} else {
+			win.Reason = win.StaleReason
+		}
+		return win
 	}
 
 	if len(series) == 0 {

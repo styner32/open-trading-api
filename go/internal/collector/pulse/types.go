@@ -71,6 +71,8 @@ type FlowSnapshot struct {
 	Insurance   float64 // 보험 (insu)
 	Bank        float64 // 은행 (bank)
 	EtcCorp     float64 // 기타법인 (etc_corp)
+	EtcForeign  float64 // 기타외국인 (etc_frgn)
+	EtcFin      float64 // 기타금융 (mrbn)
 	OK          bool
 }
 
@@ -87,19 +89,29 @@ type IndexLevel struct {
 	Decliners    int
 	Unchanged    int
 	OK           bool
+	// Metadata
+	LastTS      time.Time `json:"last_ts,omitempty"`
+	FetchedAt   time.Time `json:"fetched_at,omitempty"`
+	Freshness   string    `json:"freshness,omitempty"` // "FRESH" | "DELAYED" | "STALE" | "HOLIDAY" | "UNKNOWN"
+	AgeSeconds  float64   `json:"age_seconds,omitempty"`
+	StaleReason string    `json:"stale_reason,omitempty"`
 }
 
 // Window는 Yahoo 분봉 기반 구간 변동 (1h / 2h).
 type Window struct {
-	Symbol    string
-	Label     string
-	Current   float64
-	ChangePct float64 // 전일 종가 대비 (quote.ChangePercent)
-	LastTS    time.Time
-	Move1hPct *float64
-	Move2hPct *float64
-	OK        bool
-	Reason    string
+	Symbol      string
+	Label       string
+	Current     float64
+	ChangePct   float64 // 전일 종가 대비 (quote.ChangePercent)
+	LastTS      time.Time
+	Move1hPct   *float64
+	Move2hPct   *float64
+	OK          bool
+	Reason      string
+	FetchedAt   time.Time `json:"fetched_at,omitempty"`
+	Freshness   string    `json:"freshness,omitempty"` // "FRESH" | "DELAYED" | "STALE" | "HOLIDAY" | "UNKNOWN"
+	AgeSeconds  float64   `json:"age_seconds,omitempty"`
+	StaleReason string    `json:"stale_reason,omitempty"`
 }
 
 // FlowDelta는 1h 또는 2h 기준 수급 변화량 (억원).
@@ -143,6 +155,12 @@ type IndexFutureSnapshot struct {
 	MarketBasis   float64 `json:"market_basis"`
 	BasisMatch    bool    `json:"basis_match"`
 	OK            bool    `json:"ok"`
+	// Metadata
+	LastTS      time.Time `json:"last_ts,omitempty"`
+	FetchedAt   time.Time `json:"fetched_at,omitempty"`
+	Freshness   string    `json:"freshness,omitempty"`
+	AgeSeconds  float64   `json:"age_seconds,omitempty"`
+	StaleReason string    `json:"stale_reason,omitempty"`
 }
 
 type BasisDelta struct {
@@ -187,9 +205,25 @@ type SidecarStatus struct {
 	Status              string  `json:"status,omitempty"` // "NOT_TRIGGERED", "TRIGGERED", "ALREADY_TRIGGERED_TODAY" etc.
 }
 
+type SafetyDeviceStatus struct {
+	Market               string   `json:"market"` // "KOSPI" | "KOSDAQ"
+	Device               string   `json:"device"` // "SIDECAR_BUY" | "SIDECAR_SELL" | "CB1" | "CB2" | "CB3"
+	State                string   `json:"state"`  // "NOT_ELIGIBLE", "ELIGIBLE", "CONDITION_OBSERVED", "TRIGGERED", "RELEASED", "EXPIRED_FOR_DAY"
+	EligibleNow          bool     `json:"eligible_now"`
+	EligibilityReason    string   `json:"eligibility_reason,omitempty"`
+	Threshold            float64  `json:"threshold"`
+	ThresholdDistancePct *float64 `json:"threshold_distance_pct,omitempty"`
+	ConditionObservedAt  string   `json:"condition_observed_at,omitempty"`
+	TriggeredAt          string   `json:"triggered_at,omitempty"`
+	ReleasedAt           string   `json:"released_at,omitempty"`
+	Verification         string   `json:"verification"` // "OFFICIAL", "INFERRED", "UNCONFIRMED"
+	OfficialEventId      string   `json:"official_event_id,omitempty"`
+}
+
 type MarketSafety struct {
 	CircuitBreakers []CircuitBreakerStatus `json:"circuit_breakers"`
 	Sidecars        []SidecarStatus        `json:"sidecars"`
+	Devices         []SafetyDeviceStatus   `json:"devices,omitempty"`
 }
 
 type IndexContribution struct {
@@ -208,44 +242,73 @@ type VolatilitySnapshot struct {
 	Source    string  `json:"source"`
 	Reason    string  `json:"reason,omitempty"`
 	OK        bool    `json:"ok"`
+	// Metadata
+	LastTS      time.Time `json:"last_ts,omitempty"`
+	FetchedAt   time.Time `json:"fetched_at,omitempty"`
+	Freshness   string    `json:"freshness,omitempty"`
+	AgeSeconds  float64   `json:"age_seconds,omitempty"`
+	StaleReason string    `json:"stale_reason,omitempty"`
 }
 
 // Market은 단일 시장(KOSPI/KOSDAQ)의 통합 데이터.
 type Market struct {
-	Name        string
-	Index       IndexLevel
-	IntradayWin Window
-	Flow        FlowSnapshot
-	FlowDelta1h *FlowDelta
-	FlowDelta2h *FlowDelta
+	Name            string
+	Index           IndexLevel
+	IntradayWin     Window
+	Flow            FlowSnapshot
+	FlowDeltaPrev   *FlowDelta
+	FlowDeltaAnchor *FlowDelta
+	FlowDelta1h     *FlowDelta
+	FlowDelta2h     *FlowDelta
+}
+
+type PulseAssessment struct {
+	Direction       string   `json:"direction"`        // "STRONG_UP" | "UP" | "NEUTRAL" | "DOWN" | "STRONG_DOWN"
+	Stress          string   `json:"stress"`           // "LOW" | "NORMAL" | "HIGH" | "VERY_HIGH" | "EXTREME"
+	InternalBreadth string   `json:"internal_breadth"` // "STRONG" | "MIXED" | "WEAK" | "EXTREME_WEAK"
+	ExternalMacro   string   `json:"external_macro"`   // "SUPPORTIVE" | "NEUTRAL" | "ADVERSE"
+	Confidence      float64  `json:"confidence"`       // 0~100
+	ExcludedInputs  []string `json:"excluded_inputs"`
+	Reasons         []string `json:"reasons"`
 }
 
 // Pulse는 전체 펄스 수집 결과.
 type Pulse struct {
-	Now                time.Time
-	Date               string // KST YYYYMMDD
-	BusinessDate       string
-	KOSPI              Market
-	KOSDAQ             Market
-	KOSPIProgram       ProgramTradeSnapshot
-	KOSDAQProgram      ProgramTradeSnapshot
-	KOSPIProgramDelta  *ProgramTradeDelta
-	KOSDAQProgramDelta *ProgramTradeDelta
-	KOSPI200Future     IndexFutureSnapshot
-	KOSDAQ150Future    IndexFutureSnapshot
-	BasisDelta1h       *BasisDelta
-	BasisDelta2h       *BasisDelta
-	VKOSPI             VolatilitySnapshot
-	Safety             MarketSafety
-	Contributions      []IndexContribution
-	USDKRW             Window
-	Macro              []Window // NQ=F, ES=F, YM=F, ^N225, CL=F, ^TNX
-	StoredCount        int      // 당일 누적 레코드 수
-	PrevTS             *time.Time
-	Analysis           []string
-	Errors             map[string]string
-	StoreDir           string
-	Saved              bool
+	Now                     time.Time
+	Date                    string // KST YYYYMMDD
+	BusinessDate            string
+	KOSPI                   Market
+	KOSDAQ                  Market
+	KOSPIProgram            ProgramTradeSnapshot
+	KOSDAQProgram           ProgramTradeSnapshot
+	KOSPIProgramDelta       *ProgramTradeDelta // Legacy field for compat
+	KOSPIProgramDeltaPrev   *ProgramTradeDelta
+	KOSPIProgramDeltaAnchor *ProgramTradeDelta
+	KOSPIProgramDelta1h     *ProgramTradeDelta
+	KOSPIProgramDelta2h     *ProgramTradeDelta
+	KOSDAQProgramDelta      *ProgramTradeDelta // Legacy field for compat
+	KOSDAQProgramDeltaPrev  *ProgramTradeDelta
+	KOSDAQProgramDeltaAnchor *ProgramTradeDelta
+	KOSDAQProgramDelta1h    *ProgramTradeDelta
+	KOSDAQProgramDelta2h    *ProgramTradeDelta
+	KOSPI200Future          IndexFutureSnapshot
+	KOSDAQ150Future         IndexFutureSnapshot
+	BasisDelta1h            *BasisDelta // Legacy field for compat
+	BasisDelta2h            *BasisDelta // Legacy field for compat
+	BasisDeltaPrev          *BasisDelta
+	BasisDeltaAnchor        *BasisDelta
+	VKOSPI                  VolatilitySnapshot
+	Safety                  MarketSafety
+	Contributions           []IndexContribution
+	USDKRW                  Window
+	Macro                   []Window // NQ=F, ES=F, YM=F, ^N225, CL=F, ^TNX
+	StoredCount             int      // 당일 누적 레코드 수
+	PrevTS                  *time.Time
+	Analysis                []string
+	Errors                  map[string]string
+	StoreDir                string
+	Saved                   bool
+	Assessment              PulseAssessment
 }
 
 // PulseRecord는 JSONL에 적립되는 한 줄 레코드.
@@ -262,5 +325,7 @@ type PulseRecord struct {
 	KOSDAQ150Future IndexFutureSnapshot  `json:"kosdaq150_future,omitempty"`
 	VKOSPI          VolatilitySnapshot   `json:"vkospi,omitempty"`
 	USDKRW          float64              `json:"usdkrw"`
+	Safety          MarketSafety         `json:"safety,omitempty"`
+	Assessment      PulseAssessment      `json:"assessment,omitempty"`
 }
 

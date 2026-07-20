@@ -90,7 +90,7 @@ var _ = Describe("collectFlow", func() {
 				"KSP": flowResp(-3_556_053, -1_540_481, 5_103_306),
 			},
 		}
-		snap, err := collectFlow(context.Background(), stock, "KSP", "0001")
+		snap, err := collectFlow(context.Background(), stock, "KSP", "0001", time.Now())
 		Expect(err).To(BeNil())
 		Expect(snap.OK).To(BeTrue())
 		Expect(snap.Foreign).To(BeNumerically("~", -35560.53, 0.01))
@@ -104,7 +104,7 @@ var _ = Describe("collectFlow", func() {
 				"KSP": {Body: map[string]any{}},
 			},
 		}
-		_, err := collectFlow(context.Background(), stock, "KSP", "0001")
+		_, err := collectFlow(context.Background(), stock, "KSP", "0001", time.Now())
 		Expect(err).NotTo(BeNil())
 	})
 
@@ -114,7 +114,7 @@ var _ = Describe("collectFlow", func() {
 				"KSQ": flowResp(-1800, 114200, -114000),
 			},
 		}
-		snap, err := collectFlow(context.Background(), stock, "KSQ", "1001")
+		snap, err := collectFlow(context.Background(), stock, "KSQ", "1001", time.Now())
 		Expect(err).To(BeNil())
 		Expect(snap.Foreign).To(BeNumerically("~", -18.0, 0.01))
 		Expect(snap.Institution).To(BeNumerically("~", 1142.0, 0.01))
@@ -132,7 +132,7 @@ var _ = Describe("collectIndex", func() {
 				"0001": idxResp(8565.06, -549.49, 9083.54, 9175.45, 8511.14, 36_585_627, 87, 823),
 			},
 		}
-		idx, err := collectIndex(context.Background(), stock, "0001")
+		idx, err := collectIndex(context.Background(), stock, "0001", time.Now())
 		Expect(err).To(BeNil())
 		Expect(idx.OK).To(BeTrue())
 		Expect(idx.Price).To(BeNumerically("~", 8565.06, 0.01))
@@ -150,7 +150,7 @@ var _ = Describe("collectIndex", func() {
 				"0001": {Body: map[string]any{}},
 			},
 		}
-		_, err := collectIndex(context.Background(), stock, "0001")
+		_, err := collectIndex(context.Background(), stock, "0001", time.Now())
 		Expect(err).NotTo(BeNil())
 	})
 })
@@ -167,17 +167,17 @@ var _ = Describe("buildWindow", func() {
 			{DateUnix: nowBase.Add(-3 * time.Hour).Unix(), Close: 100},
 			{DateUnix: nowBase.Add(-2 * time.Hour).Unix(), Close: 102},
 			{DateUnix: nowBase.Add(-61 * time.Minute).Unix(), Close: 104},
-			{DateUnix: nowBase.Add(-10 * time.Minute).Unix(), Close: 106},
+			{DateUnix: nowBase.Add(-3 * time.Minute).Unix(), Close: 106},
 		}
 		quote := yahoo.Quote{Price: 107, ChangePercent: 0.5}
 		win := buildWindow("^KS11", "KOSPI", quote, series, nowBase)
 		Expect(win.OK).To(BeTrue())
 		// 1h 기준: nowBase-1h=12:38, at-or-before → -61min 점 (Close=104)
-		// 앵커 = lastTS = nowBase-10min
-		// 1h 윈도우 target = lastTS-1h = nowBase-70min → at-or-before는 -2h 점(Close=102)
+		// 앵커 = lastTS = nowBase-3min
+		// 1h 윈도우 target = lastTS-1h = nowBase-63min → at-or-before는 -2h 점(Close=102)
 		Expect(win.Move1hPct).NotTo(BeNil())
 		Expect(*win.Move1hPct).To(BeNumerically("~", (107.0-102.0)/102.0*100.0, 0.1))
-		// 2h 윈도우 target = lastTS-2h = nowBase-130min → at-or-before는 -3h 점(Close=100)
+		// 2h 윈도우 target = lastTS-2h = nowBase-123min → at-or-before는 -3h 점(Close=100)
 		Expect(win.Move2hPct).NotTo(BeNil())
 		Expect(*win.Move2hPct).To(BeNumerically("~", (107.0-100.0)/100.0*100.0, 0.1))
 	})
