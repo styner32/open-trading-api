@@ -554,7 +554,15 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 						devStatus.Verification = "UNCONFIRMED"
 						devStatus.ConditionObservedAt = nowKST.Format("15:04:05")
 					} else {
-						futuresGap := math.Max(0, item.threshold-math.Abs(item.f.ChangePct))
+						var futuresGap float64
+						if signMult > 0 {
+							futuresGap = item.threshold - item.f.ChangePct
+						} else {
+							futuresGap = item.f.ChangePct + item.threshold
+						}
+						if futuresGap < 0 {
+							futuresGap = 0
+						}
 						devStatus.ThresholdDistancePct = &futuresGap
 					}
 				}

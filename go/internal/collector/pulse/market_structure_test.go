@@ -113,7 +113,30 @@ var _ = Describe("market structure collectors", func() {
 		Expect(got.ThresholdReached).To(BeTrue())
 		f.SpotChangePct = 3.1
 		Expect(buildSidecar("KOSDAQ", f, 6, 3, nil).ThresholdReached).To(BeFalse())
+	})
 
+	It("선물 급등 시 SIDECAR_SELL과 SIDECAR_BUY 임계 간격을 정확히 산출", func() {
+		now := time.Date(2026, 7, 21, 13, 13, 54, 0, time.Local)
+		k200 := IndexFutureSnapshot{Code: "A01609", ChangePct: 5.46, OK: true}
+		safety := buildMarketSafety(now, "20260721", IndexLevel{}, IndexLevel{}, k200, IndexFutureSnapshot{}, nil)
+
+		var sellDev, buyDev *SafetyDeviceStatus
+		for i := range safety.Devices {
+			if safety.Devices[i].Market == "KOSPI" && safety.Devices[i].Device == "SIDECAR_SELL" {
+				sellDev = &safety.Devices[i]
+			}
+			if safety.Devices[i].Market == "KOSPI" && safety.Devices[i].Device == "SIDECAR_BUY" {
+				buyDev = &safety.Devices[i]
+			}
+		}
+
+		Expect(sellDev).NotTo(BeNil())
+		Expect(sellDev.State).To(Equal("ELIGIBLE"))
+		Expect(sellDev.ThresholdDistancePct).NotTo(BeNil())
+		Expect(*sellDev.ThresholdDistancePct).To(BeNumerically("~", 10.46, 0.01))
+
+		Expect(buyDev).NotTo(BeNil())
+		Expect(buyDev.State).To(Equal("CONDITION_OBSERVED"))
 	})
 
 	It("시총 상위 종목의 추정 포인트 기여도를 계산", func() {
