@@ -13,6 +13,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/kis-open-api/go/internal/auth"
+	"github.com/kis-open-api/go/internal/collector/premarket"
 	"github.com/kis-open-api/go/internal/collector/pulse"
 	"github.com/kis-open-api/go/internal/collector/snapshot"
 	"github.com/kis-open-api/go/internal/domesticfutureoption"
@@ -32,7 +33,7 @@ func main() {
 func run(args []string) error {
 	_ = godotenv.Load()
 	if len(args) < 2 || args[0] != "report" {
-		return fmt.Errorf("usage: go run ./cmd/agent report <market-snapshot|credit-balance|intraday-pulse> [args...]")
+		return fmt.Errorf("usage: go run ./cmd/agent report <market-snapshot|credit-balance|intraday-pulse|premarket|safety-devices> [args...]")
 	}
 	switch args[1] {
 	case "market-snapshot":
@@ -41,8 +42,12 @@ func run(args []string) error {
 		return runCreditBalance(args[2:])
 	case "intraday-pulse":
 		return runIntradayPulse(args[2:])
+	case "premarket":
+		return runPremarket(args[2:])
+	case "safety-devices":
+		return runIntradayPulse(append([]string{"--safety-only"}, args[2:]...))
 	default:
-		return fmt.Errorf("unknown report type %q (supported: market-snapshot, credit-balance, intraday-pulse)", args[1])
+		return fmt.Errorf("unknown report type %q (supported: market-snapshot, credit-balance, intraday-pulse, premarket, safety-devices)", args[1])
 	}
 }
 
@@ -117,6 +122,8 @@ func runIntradayPulse(args []string) error {
 	storeDir := fs.String("store-dir", envDefault("PULSE_OUTPUT_DIR", ".cache/pulse"), "펄스 적립 디렉터리")
 	noSave := fs.Bool("no-save", false, "적립/렌더 저장 생략 (읽기 전용)")
 	asJSON := fs.Bool("json", false, "JSON 출력")
+	safetyOnly := fs.Bool("safety-only", false, "서킷브레이커 및 사이드카 상태만 렌더링")
+	premarketFlag := fs.Bool("premarket", false, "개장전 취약도 보드 실행")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -150,12 +157,26 @@ func runIntradayPulse(args []string) error {
 	}, opts)
 
 	if *asJSON {
+		if *safetyOnly {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(result.Safety)
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(pulse.PulseToMap(result))
 	}
 
-	output := pulse.Render(result)
+	if *premarketFlag {
+		return runPremarket(args)
+	}
+
+	var output string
+	if *safetyOnly {
+		output = pulse.RenderSafetyOnly(result)
+	} else {
+		output = pulse.Render(result)
+	}
 	fmt.Print(output)
 
 	// MD 저장
@@ -166,6 +187,62 @@ func runIntradayPulse(args []string) error {
 			fmt.Fprintf(os.Stderr, "[pulse] MD saved: %s\n", pulse.MDPath(opts, result.Date))
 		}
 	}
+	return nil
+}
+
+func runPremarket(args []string) error {
+	fs := flag.NewFlagSet("premarket", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	storeDir := fs.String("store-dir", envDefault("PREMARKET_STORE_DIR", ".cache/premarket"), "개장전 적립 디렉터리")
+	noSave := fs.Bool("no-save", false, "적립/저장 생략")
+	asJSON := fs.Bool("json", false, "JSON 출력")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	opts := premarket.Options{
+		StoreDir: *storeDir,
+		NoSave:   *noSave,
+		JSON:     *asJSON,
+	}
+
+	client, _ := newKISClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	var stockService premarket.DomesticStock
+	var futureService premarket.DomesticFuture
+	var yahooClient premarket.YahooQuotes
+	var naverClient premarket.NaverFinance
+
+	if client != nil {
+		_, _ = client.EnsureAuthToken(ctx)
+		stockService = domesticstock.NewService(client)
+		futureService = domesticfutureoption.NewService(client)
+		yC, nC := newExternalClients(client)
+		yahooClient = yC
+		naverClient = nC
+	}
+	kofiaClient := kofia.NewCachedClient(envDefault("KOFIA_CACHE_DIR", ".cache"), os.Getenv("USER_AGENT"))
+
+	result := premarket.Collect(ctx, premarket.Deps{
+		Stock:    stockService,
+		Future:   futureService,
+		Yahoo:    yahooClient,
+		Naver:    naverClient,
+		KOFIA:    kofiaClient,
+		Clock:    time.Now,
+		StoreDir: *storeDir,
+	}, opts)
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	}
+
+	output := premarket.Render(result)
+	fmt.Print(output)
 	return nil
 }
 

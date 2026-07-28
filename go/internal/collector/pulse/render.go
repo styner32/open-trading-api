@@ -256,6 +256,16 @@ func renderMarketSafety(b *strings.Builder, safety MarketSafety) {
 	}
 }
 
+// RenderSafetyOnly는 서킷브레이커와 사이드카 안전장치 현황만 렌더링합니다.
+func RenderSafetyOnly(p *Pulse) string {
+	var b strings.Builder
+	nowKST := p.Now.In(kstLocation)
+
+	b.WriteString(fmt.Sprintf("🚨 시장 안전장치 현황 (Sidecar / Circuit Breaker) — %s\n", nowKST.Format(kstLayout)))
+	renderMarketSafety(&b, p.Safety)
+	return b.String()
+}
+
 func renderDomesticDerivatives(b *strings.Builder, p *Pulse) {
 	if p.KOSPI200Future.OK {
 		regime := "콘탱고"

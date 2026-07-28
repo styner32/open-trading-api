@@ -144,7 +144,7 @@ func renderGlobal(b *strings.Builder, s *Snapshot) {
 		{"나스닥 선물", "NQ=F", "전일 선물 정산가", "실시간"},
 		{"WTI 유가", "CL=F", "전일 정산가", "실시간"},
 		{"BTC", "BTC-USD", "24시간 전", "실시간"},
-		{"USD/KRW", "KRW=X", "전일 서울 종가", "실시간"},
+		{"USD/KRW", "KRW=X", "Yahoo KRW=X 호가", "실시간"},
 	} {
 		value := na(sectionErr(s, "global"))
 		if s.Global != nil {

@@ -391,9 +391,11 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 		for _, r := range records {
 			for _, dev := range r.Safety.Devices {
 				if dev.Market == market && dev.Device == device {
-					if dev.State == "TRIGGERED" || dev.State == "RELEASED" || dev.State == "EXPIRED_FOR_DAY" {
+					if dev.State == "TRIGGERED" || dev.State == "RELEASED" || dev.State == "EXPIRED_FOR_DAY" || dev.State == "CONDITION_OBSERVED" {
 						if dev.TriggeredAt != "" {
 							return true, dev.TriggeredAt
+						} else if dev.ConditionObservedAt != "" {
+							return true, dev.ConditionObservedAt
 						}
 					}
 				}
@@ -625,7 +627,18 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 
 				prereqMet := true
 				if step.prevCb != "" {
-					prereqMet = cbTriggered[item.market][step.prevCb]
+					prevTriggered := cbTriggered[item.market][step.prevCb]
+					if !prevTriggered {
+						for _, prevDev := range s.Devices {
+							if prevDev.Market == item.market && prevDev.Device == step.prevCb {
+								if prevDev.State == "CONDITION_OBSERVED" || prevDev.State == "TRIGGERED" || prevDev.State == "RELEASED" {
+									prevTriggered = true
+									break
+								}
+							}
+						}
+					}
+					prereqMet = prevTriggered
 				}
 
 				devStatus.EligibleNow = timeEligible && prereqMet

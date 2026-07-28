@@ -62,6 +62,10 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		return
 	}
 
+	if c.Date != "" {
+		b.WriteString(fmt.Sprintf("*참고: 증시자금/신용통계 기준일자: %s (T+2 결제시차 집계)*\n", c.Date))
+	}
+
 	isKISStale := p != nil && p.Credit != nil && c.Date != "" && p.Credit.Date != "" && c.Date == p.Credit.Date
 	isKOFIAStale := p != nil && p.Credit != nil && c.KofiaDate != "" && p.Credit.KofiaDate != "" && c.KofiaDate == p.Credit.KofiaDate
 
@@ -233,7 +237,11 @@ func renderConcentration(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 
 	top5Line := fmt.Sprintf("%.1f%%", c.Top5Percent)
 	top10Line := fmt.Sprintf("%.1f%%", c.Top10Percent)
-	hhiLine := fmt.Sprintf("%.0f [%s]", c.HHI, c.HHILevel)
+	hhiLevelStr := c.HHILevel
+	if s.Cumulative != nil && s.Cumulative.SamsungSKHynixCapRatio != nil && *s.Cumulative.SamsungSKHynixCapRatio >= 50.0 {
+		hhiLevelStr += " (🔴 상위 2종목 쏠림 극심)"
+	}
+	hhiLine := fmt.Sprintf("%.0f [%s]", c.HHI, hhiLevelStr)
 	if p != nil && p.Concentration != nil {
 		if p.Concentration.Top5Percent > 0 {
 			diff := c.Top5Percent - p.Concentration.Top5Percent
@@ -266,7 +274,7 @@ func renderConcentration(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	b.WriteString("  - 임계값: <1,500 비집중, 1,500~2,500 중간, >2,500 고집중\n")
 	b.WriteString("- 상위 종목 집중 위험: " + c.RiskLevel + "\n")
 	if s.Cumulative != nil && s.Cumulative.SamsungSKHynixCapRatio != nil {
-		b.WriteString(fmt.Sprintf("  - 구성요소: 상위 2종목(삼성전자+SK하이닉스) 비중 %.2f%%, HHI %.0f\n", *s.Cumulative.SamsungSKHynixCapRatio, c.HHI))
+		b.WriteString(fmt.Sprintf("  - 구성요소: 당일 상위 2종목(삼성전자+SK하이닉스) 비중 %.2f%%, HHI %.0f\n", *s.Cumulative.SamsungSKHynixCapRatio, c.HHI))
 	}
 	b.WriteString("\n")
 }
@@ -292,8 +300,12 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 			sameTimeBasisRate = (ls.BasisPoint1530 / ls.SpotPrice) * 100
 		}
 		sameTimeBasisStr := fmt.Sprintf("%.2fpt (%.2f%%)", ls.BasisPoint1530, sameTimeBasisRate)
+		alignNote := "판정 보류 — 이론 베이시스 미수집"
+		if ls.BasisAlignmentStatus == "ALIGNMENT_UNVERIFIED" {
+			alignNote = "판정 보류 — ALIGNMENT_UNVERIFIED"
+		}
 		
-		b.WriteString(fmt.Sprintf("- 선물-현물 동시점 베이시스 (15:30 KST): %s (판정 보류 — 이론 베이시스 미수집)\n", sameTimeBasisStr))
+		b.WriteString(fmt.Sprintf("- 선물-현물 동시점 베이시스 (15:30 KST): %s (%s)\n", sameTimeBasisStr, alignNote))
 		b.WriteString(fmt.Sprintf("- 선물-현물 종가간 스프레드 (15:45 / 15:30): %s\n", closeBasisStr))
 		b.WriteString(fmt.Sprintf("  - 현물(KOSPI 200 종가): %.2f | 선물 15:30가: %.2f | 선물 최종 종가: %.2f\n", ls.SpotPrice, ls.FuturesPrice1530, ls.FuturesPrice))
 	} else {
@@ -301,7 +313,11 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	}
 
 	// 2) 프로그램 비차익 당일 누적 수급 (억 원)
-	b.WriteString("- 코스피 프로그램 비차익 누적 (억 원):\n")
+	reconciledNote := ""
+	if ls.ProgramReconciledStatus == "NOT_RECONCILED" {
+		reconciledNote = " [NOT_RECONCILED: 기관/계 파싱 실패 또는 수급 불일치]"
+	}
+	b.WriteString("- 코스피 프로그램 비차익 누적 (억 원):" + reconciledNote + "\n")
 	b.WriteString(fmt.Sprintf("  - 외국인: %s | 기관: %s | 전체: %s\n", eok(ls.KOSPINetNonArbitrageForeign), eok(ls.KOSPINetNonArbitrageOrgan), eok(ls.KOSPINetNonArbitrageTotal)))
 
 	// 3) 15시 이후 장 막판 흐름
@@ -334,7 +350,17 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	// 5) 다중 막판 패턴 감지 요약 테이블
 	b.WriteString("- **다중 막판 패턴 감지 요약 (Late-Session Pattern Analysis)**:\n\n")
 
-	status := func(score float64, name string) string {
+	fmtScore := func(score *float64) string {
+		if !ls.PatternEvaluated || score == nil {
+			return "`N/A`"
+		}
+		return fmt.Sprintf("`%.1f`", *score)
+	}
+
+	status := func(score *float64, name string) string {
+		if !ls.PatternEvaluated || score == nil {
+			return "판정 보류"
+		}
 		if ls.PatternDetected && ls.PrimaryPattern == name {
 			switch name {
 			case "Late-Session Capitulation":
@@ -351,10 +377,7 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 				return "**🔥 주도 패턴 (Dominant)**"
 			}
 		}
-		if ls.PrimaryPattern == "판정 보류 — 데이터 미수집" {
-			return "판정 보류"
-		}
-		if score >= 2.0 {
+		if *score >= 2.0 {
 			return "⚠️ 감지 (Detected)"
 		}
 		return "정상 (Normal)"
@@ -362,11 +385,11 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 
 	b.WriteString("| 패턴명 (Pattern Name) | 감지 점수 (Score) | 임계값 (Threshold) | 판정 상태 (Status) |\n")
 	b.WriteString("| :--- | :---: | :---: | :--- |\n")
-	b.WriteString(fmt.Sprintf("| 1. **Late-Session Capitulation** (후반 투매) | `%.1f` | 2.0 | %s |\n", ls.CapitulationScore, status(ls.CapitulationScore, "Late-Session Capitulation")))
-	b.WriteString(fmt.Sprintf("| 2. **Late-Session Short Squeeze** (후반 숏스퀴즈) | `%.1f` | 2.0 | %s |\n", ls.ShortSqueezeScore, status(ls.ShortSqueezeScore, "Late-Session Short Squeeze")))
-	b.WriteString(fmt.Sprintf("| 3. **Window Dressing** (인위적 종가 관리) | `%.1f` | 2.0 | %s |\n", ls.WindowDressingScore, status(ls.WindowDressingScore, "Window Dressing")))
-	b.WriteString(fmt.Sprintf("| 4. **ETF Rebalancing Impact** (패시브 리밸런싱) | `%.1f` | 2.0 | %s |\n", ls.RebalancingScore, status(ls.RebalancingScore, "ETF Rebalancing Impact")))
-	b.WriteString(fmt.Sprintf("| 5. **Expiration Basis Arbitrage** (만기일 차익 청산) | `%.1f` | 2.0 | %s |\n", ls.ExpirationArbitrageScore, status(ls.ExpirationArbitrageScore, "Expiration Basis Arbitrage")))
+	b.WriteString(fmt.Sprintf("| 1. **Late-Session Capitulation** (후반 투매) | %s | 2.0 | %s |\n", fmtScore(ls.CapitulationScore), status(ls.CapitulationScore, "Late-Session Capitulation")))
+	b.WriteString(fmt.Sprintf("| 2. **Late-Session Short Squeeze** (후반 숏스퀴즈) | %s | 2.0 | %s |\n", fmtScore(ls.ShortSqueezeScore), status(ls.ShortSqueezeScore, "Late-Session Short Squeeze")))
+	b.WriteString(fmt.Sprintf("| 3. **Window Dressing** (인위적 종가 관리) | %s | 2.0 | %s |\n", fmtScore(ls.WindowDressingScore), status(ls.WindowDressingScore, "Window Dressing")))
+	b.WriteString(fmt.Sprintf("| 4. **ETF Rebalancing Impact** (패시브 리밸런싱) | %s | 2.0 | %s |\n", fmtScore(ls.RebalancingScore), status(ls.RebalancingScore, "ETF Rebalancing Impact")))
+	b.WriteString(fmt.Sprintf("| 5. **Expiration Basis Arbitrage** (만기일 차익 청산) | %s | 2.0 | %s |\n", fmtScore(ls.ExpirationArbitrageScore), status(ls.ExpirationArbitrageScore, "Expiration Basis Arbitrage")))
 	b.WriteString("\n")
 
 	// 6) 패턴 세부 정보 및 경고 카드
@@ -375,30 +398,34 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		switch ls.PrimaryPattern {
 		case "Late-Session Capitulation":
 			b.WriteString("> [!WARNING]\n")
-			b.WriteString(fmt.Sprintf("> **🚨 LATE-SESSION CAPITULATION EVENT DETECTED (감지 점수: %.1f)**\n", ls.CapitulationScore))
+			b.WriteString(fmt.Sprintf("> **🚨 LATE-SESSION CAPITULATION EVENT DETECTED (감지 점수: %s)**\n", fmtScore(ls.CapitulationScore)))
 			b.WriteString("> 장중 고점 대비 반등을 시도했으나 장 막판 동시호가에 외국인 및 비차익 프로그램 매도 폭탄이 쏟아져 당일 저가 부근에서 마감하였습니다. 익일 시초가 반대매매 갭다운에 유의하십시오.\n\n")
 		case "Late-Session Short Squeeze":
 			b.WriteString("> [!TIP]\n")
-			b.WriteString(fmt.Sprintf("> **🚀 LATE-SESSION SHORT SQUEEZE EVENT DETECTED (감지 점수: %.1f)**\n", ls.ShortSqueezeScore))
+			b.WriteString(fmt.Sprintf("> **🚀 LATE-SESSION SHORT SQUEEZE EVENT DETECTED (감지 점수: %s)**\n", fmtScore(ls.ShortSqueezeScore)))
 			b.WriteString("> 장 막판 오버나잇 리스크를 회피하려는 숏커버/숏스퀴즈 물량이 집중 유입되며 당일 고가 부근에서 마감하였습니다. 숏 포지션 청산에 따른 매수세가 종가 동시호가까지 강하게 이어졌습니다.\n\n")
 		case "Window Dressing":
 			b.WriteString("> [!NOTE]\n")
-			b.WriteString(fmt.Sprintf("> **📈 WINDOW DRESSING EVENT DETECTED (감지 점수: %.1f)**\n", ls.WindowDressingScore))
+			b.WriteString(fmt.Sprintf("> **📈 WINDOW DRESSING EVENT DETECTED (감지 점수: %s)**\n", fmtScore(ls.WindowDressingScore)))
 			b.WriteString("> 분기/반기/연말 영업일 종가 동시호가에 기관투자자의 인위적인 포트폴리오 수익률 관리 매수세가 집중 유입되었습니다. 본질 가치와 무관하게 종가가 왜곡되었을 가능성이 있으므로 익일 정상화(되돌림) 흐름에 주의하십시오.\n\n")
 		case "ETF Rebalancing Impact":
 			b.WriteString("> [!IMPORTANT]\n")
-			b.WriteString(fmt.Sprintf("> **⚖️ ETF REBALANCING IMPACT EVENT DETECTED (감지 점수: %.1f)**\n", ls.RebalancingScore))
+			b.WriteString(fmt.Sprintf("> **⚖️ ETF REBALANCING IMPACT EVENT DETECTED (감지 점수: %s)**\n", fmtScore(ls.RebalancingScore)))
 			b.WriteString("> 주요 지수(MSCI, KRX300 등) 리밸런싱일을 맞이하여 장 마감 동시호가에 대규모 패시브 자금의 기계적 매매(프로그램/외국인)가 대거 집행되었습니다. 단기 수급 왜곡에 따른 일시적 가격 변동성이 극대화되었습니다.\n\n")
 		case "Expiration Basis Arbitrage":
 			b.WriteString("> [!WARNING]\n")
-			b.WriteString(fmt.Sprintf("> **⚡ EXPIRATION BASIS ARBITRAGE EVENT DETECTED (감지 점수: %.1f)**\n", ls.ExpirationArbitrageScore))
+			b.WriteString(fmt.Sprintf("> **⚡ EXPIRATION BASIS ARBITRAGE EVENT DETECTED (감지 점수: %s)**\n", fmtScore(ls.ExpirationArbitrageScore)))
 			b.WriteString("> 선물/옵션 만기일을 맞이하여 선물-현물 괴리(Basis) 청산을 위한 대규모 매수/매도 프로그램 차익거래 물량이 종가 동시호가에 대거 쏟아졌습니다. 청산 방향에 따른 강한 왜곡 및 가격 충격이 감지되었습니다.\n\n")
 		default:
-			b.WriteString(fmt.Sprintf("- **상태**: ⚠ 패턴 감지됨 (%s, 점수: %.1f)\n\n", ls.PrimaryPattern, ls.CapitulationScore))
+			b.WriteString(fmt.Sprintf("- **상태**: ⚠ 패턴 감지됨 (%s, 점수: %s)\n\n", ls.PrimaryPattern, fmtScore(ls.CapitulationScore)))
 		}
 	} else {
-		if ls.PrimaryPattern == "판정 보류 — 데이터 미수집" {
-			b.WriteString("- **패턴 감지 세부 정보**: 판정 보류 (장 막판 또는 동시호가 데이터 수집 누락으로 패턴 평가가 수행되지 않음)\n\n")
+		if !ls.PatternEvaluated || ls.PrimaryPattern == "판정 보류 — 데이터 미수집" {
+			reasonStr := "장 막판 또는 동시호가 데이터 수집 누락으로 패턴 평가가 수행되지 않음"
+			if ls.PatternReason != "" {
+				reasonStr = fmt.Sprintf("사유: %s (데이터 수집 누락)", ls.PatternReason)
+			}
+			b.WriteString(fmt.Sprintf("- **패턴 감지 세부 정보**: 판정 보류 (%s)\n\n", reasonStr))
 		} else {
 			b.WriteString("- **패턴 감지 세부 정보**: 정상 상태 (특이 수급 패턴이 감지되지 않음)\n\n")
 		}

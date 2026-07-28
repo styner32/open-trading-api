@@ -215,15 +215,26 @@ func analyzeRiskLabel(p *Pulse) string {
 	}
 
 	label := "중립 (Neutral)"
-	if score >= 2 {
+	a := p.Assessment
+
+	isPriceUp := a.Direction == "UP" || a.Direction == "STRONG_UP" || (p.KOSPI.IntradayWin.Move1hPct != nil && *p.KOSPI.IntradayWin.Move1hPct > 0)
+	isFlowNegative := p.KOSPI.FlowDelta1h != nil && p.KOSPI.FlowDelta1h.Foreign < 0
+
+	if isPriceUp && isFlowNegative && a.Stress != "EXTREME" {
+		label = "수급 미동조 반등 (MIXED_REBOUND_UNCONFIRMED)"
+	} else if score >= 2 {
 		label = "위험선호 (Risk-on)"
 	} else if score <= -2 {
 		label = "위험회피 (Risk-off)"
 	}
 
-	a := p.Assessment
-	return fmt.Sprintf("종합: %s (신호점수 %+d) [방향성 %s · 스트레스 %s · 내부폭 %s · 매크로 %s (신뢰도 %.1f%%)]",
-		label, score, a.Direction, a.Stress, a.InternalBreadth, a.ExternalMacro, a.Confidence)
+	return fmt.Sprintf("종합: %s (신호점수 %+d) [방향성 %s · 수급 %s · 스트레스 %s · 내부폭 %s · 매크로 %s (신뢰도 %.1f%%)]",
+		label, score, a.Direction, func() string {
+			if isFlowNegative {
+				return "NEGATIVE"
+			}
+			return "POSITIVE"
+		}(), a.Stress, a.InternalBreadth, a.ExternalMacro, a.Confidence)
 }
 
 func AssessPulse(p *Pulse) PulseAssessment {
@@ -409,10 +420,10 @@ func AssessPulse(p *Pulse) PulseAssessment {
 	cbActive := false
 
 	for _, d := range p.Safety.Devices {
-		if strings.HasPrefix(d.Device, "SIDECAR_") && (d.State == "TRIGGERED" || d.State == "RELEASED") {
+		if strings.HasPrefix(d.Device, "SIDECAR_") && (d.State == "TRIGGERED" || d.State == "RELEASED" || d.State == "CONDITION_OBSERVED") {
 			sidecarActive = true
 		}
-		if strings.HasPrefix(d.Device, "CB") && (d.State == "TRIGGERED" || d.State == "RELEASED") {
+		if strings.HasPrefix(d.Device, "CB") && (d.State == "TRIGGERED" || d.State == "RELEASED" || d.State == "CONDITION_OBSERVED") {
 			cbActive = true
 		}
 	}

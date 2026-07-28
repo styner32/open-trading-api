@@ -171,6 +171,13 @@ func collectRegime(ctx context.Context, yClient YahooQuotes, price *PriceSection
 	} else if kospiChg <= -3.0 {
 		domResult = math.Max(domResult, 5.0)
 	}
+	if vkospiVal >= 70.0 {
+		domResult = math.Max(domResult, 8.0)
+	} else if vkospiVal >= 50.0 {
+		domResult = math.Max(domResult, 6.5)
+	} else if vkospiVal >= 35.0 {
+		domResult = math.Max(domResult, 5.0)
+	}
 	if impact != nil && impact.SidecarStatus == "triggered" {
 		domResult = math.Max(domResult, 6.0)
 	}

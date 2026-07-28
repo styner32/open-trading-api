@@ -76,21 +76,26 @@ type LateSessionSection struct {
 	SpotPrice                     float64       `json:"spot_price"`
 	FuturesPrice1530              float64       `json:"futures_price_1530,omitempty"`
 	BasisPoint1530                float64       `json:"basis_point_1530,omitempty"`
+	BasisAlignmentStatus          string        `json:"basis_alignment_status,omitempty"` // "VERIFIED" or "ALIGNMENT_UNVERIFIED"
 
 	KOSPINetNonArbitrageForeign   float64       `json:"kospi_net_non_arbitrage_foreign"`
 	KOSPINetNonArbitrageOrgan     float64       `json:"kospi_net_non_arbitrage_organ"`
 	KOSPINetNonArbitrageTotal     float64       `json:"kospi_net_non_arbitrage_total"`
+	ProgramReconciledStatus       string        `json:"program_reconciled_status,omitempty"` // "RECONCILED" or "NOT_RECONCILED"
+
 	LateProgramNetEok             *float64      `json:"late_program_net_eok"`
 	CloseSessionProgramNetEok     *float64      `json:"close_session_program_net_eok"`
 	CloseSessionForeignNetEok     *float64      `json:"close_session_foreign_net_eok"`
 	CloseSessionOrganNetEok       *float64      `json:"close_session_organ_net_eok"`
 	PrimaryPattern                string        `json:"primary_pattern"`
-	CapitulationScore             float64       `json:"capitulation_score"`
-	ShortSqueezeScore             float64       `json:"short_squeeze_score"`
-	WindowDressingScore           float64       `json:"window_dressing_score"`
-	RebalancingScore              float64       `json:"rebalancing_score"`
-	ExpirationArbitrageScore      float64       `json:"expiration_arbitrage_score"`
+	CapitulationScore             *float64      `json:"capitulation_score,omitempty"`
+	ShortSqueezeScore             *float64      `json:"short_squeeze_score,omitempty"`
+	WindowDressingScore           *float64      `json:"window_dressing_score,omitempty"`
+	RebalancingScore              *float64      `json:"rebalancing_score,omitempty"`
+	ExpirationArbitrageScore      *float64      `json:"expiration_arbitrage_score,omitempty"`
 	PatternDetected               bool          `json:"pattern_detected"`
+	PatternEvaluated              bool          `json:"pattern_evaluated"`
+	PatternReason                 string        `json:"pattern_reason,omitempty"`
 	Status                        QualityStatus `json:"status,omitempty"`
 	QualityFlags                  []string      `json:"quality_flags,omitempty"`
 }

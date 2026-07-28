@@ -92,6 +92,7 @@ func fillBasis(ctx context.Context, deps Deps, date string, sec *LateSessionSect
 	if spotPrice > 0 {
 		sec.BasisRate = (sec.BasisPoint / spotPrice) * 100
 	}
+	sec.BasisAlignmentStatus = "ALIGNMENT_UNVERIFIED"
 
 	// 4) 15:30 선물 가격 조회 (동시점 베이시스 계산용)
 	now := time.Now().In(time.FixedZone("KST", 9*3600))
@@ -151,6 +152,12 @@ func fillProgramTradeToday(ctx context.Context, deps Deps, sec *LateSessionSecti
 		default:
 			fmt.Printf("[latesession] Warning: unmatched invr_cls_name '%s' (nabt_ntby_amt=%.0f)\n", name, netAmt)
 		}
+	}
+
+	if !organMatched || !totalMatched {
+		sec.ProgramReconciledStatus = "NOT_RECONCILED"
+	} else {
+		sec.ProgramReconciledStatus = "RECONCILED"
 	}
 
 	// Fallback: Total 미매칭 시 개별 합산으로 보정
@@ -308,17 +315,26 @@ func fillCloseSessionInvestorFlow(ctx context.Context, deps Deps, sec *LateSessi
 
 func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection) {
 	if priceSec == nil || priceSec.Low <= 0 {
-		sec.PrimaryPattern = "Normal (정상)"
+		sec.PrimaryPattern = "판정 보류 — 데이터 미수집"
+		sec.PatternDetected = false
+		sec.PatternEvaluated = false
+		sec.PatternReason = "PRICE_DATA_MISSING"
+		sec.Status = StatusInsufficientData
+		sec.QualityFlags = []string{"PRICE_DATA_MISSING"}
 		return
 	}
 
 	if sec.LateProgramNetEok == nil || sec.CloseSessionProgramNetEok == nil || sec.CloseSessionForeignNetEok == nil || sec.CloseSessionOrganNetEok == nil {
 		sec.PrimaryPattern = "판정 보류 — 데이터 미수집"
 		sec.PatternDetected = false
+		sec.PatternEvaluated = false
+		sec.PatternReason = "INSUFFICIENT_TIMESTAMPS"
 		sec.Status = StatusInsufficientData
 		sec.QualityFlags = []string{"LATE_SESSION_DATA_MISSING"}
 		return
 	}
+
+	sec.PatternEvaluated = true
 
 	// 기본 통계 계산
 	volatilityRange := (priceSec.High - priceSec.Low) / priceSec.Low
@@ -378,8 +394,6 @@ func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection
 	// 5. Expiration Basis Arbitrage (EBA) 스코어 계산
 	ebaScore := 0.0
 	if isExpiration {
-		// 만기일 캘린더 게이트 통과 후 계산
-		// 종가 동시호가 프로그램 매매 유입 필수조건 (Volume Gate)
 		if math.Abs(*sec.CloseSessionProgramNetEok) >= 100.0 {
 			absBasis := math.Abs(sec.BasisPoint)
 			if absBasis >= 1.0 { ebaScore += 1.0 }
@@ -392,7 +406,6 @@ func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection
 				ebaScore += 1.0
 			}
 
-			// 만기일 자체에 대한 기본 가중치 (베이시스나 프로그램 매매가 어느 정도 동반되어야 EBA로 인정)
 			if ebaScore > 0 {
 				ebaScore += 1.0
 			}
@@ -400,11 +413,11 @@ func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection
 	}
 
 	// 각 스코어 저장
-	sec.CapitulationScore = lscScore
-	sec.ShortSqueezeScore = lssScore
-	sec.WindowDressingScore = wdScore
-	sec.RebalancingScore = eriScore
-	sec.ExpirationArbitrageScore = ebaScore
+	sec.CapitulationScore = ptr(lscScore)
+	sec.ShortSqueezeScore = ptr(lssScore)
+	sec.WindowDressingScore = ptr(wdScore)
+	sec.RebalancingScore = ptr(eriScore)
+	sec.ExpirationArbitrageScore = ptr(ebaScore)
 
 	// 최대 점수 비교를 통한 지배 패턴 선정
 	maxScore := 0.0
@@ -416,7 +429,6 @@ func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection
 	if eriScore > maxScore { maxScore = eriScore; pattern = "ETF Rebalancing Impact" }
 	if ebaScore > maxScore { maxScore = ebaScore; pattern = "Expiration Basis Arbitrage" }
 
-	// 임계값 2.0 이상 획득 시 감지 처리
 	if maxScore >= 2.0 {
 		sec.PrimaryPattern = pattern
 		sec.PatternDetected = true
