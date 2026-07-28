@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 import json
 import os
 import re
+import sys
 import time
 import shutil
 import subprocess
@@ -88,8 +89,12 @@ class ApiExecutor:
         """초기화"""
         self.tool_name = tool_name
         self.temp_base_dir = "./tmp"
-        # 절대 경로로 venv python 설정
-        self.venv_python = os.path.join(os.getcwd(), ".venv", "bin", "python")
+        # 절대 경로로 venv python 설정 (OS별 venv 경로)
+        venv_dir = os.path.join(os.getcwd(), ".venv")
+        if sys.platform == "win32":
+            self.venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
+        else:
+            self.venv_python = os.path.join(venv_dir, "bin", "python")
 
         # temp 디렉토리 생성
         os.makedirs(self.temp_base_dir, exist_ok=True)
@@ -362,8 +367,8 @@ class ApiExecutor:
             # 1. 임시 디렉토리 생성
             # FastMCP Context에서 request_id 안전하게 가져오기
             try:
-                request_id = ctx.get_state(factory.CONTEXT_REQUEST_ID)
-            except:
+                request_id = await ctx.get_state(factory.CONTEXT_REQUEST_ID) or "unknown"
+            except Exception:
                 request_id = "unknown"
             temp_dir = self._create_temp_directory(request_id)
 
