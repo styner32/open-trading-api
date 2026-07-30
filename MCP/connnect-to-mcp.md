@@ -36,57 +36,7 @@ MCP는 Claude를 개발한 Anthropic에서 만든 프로토콜로, AI 모델이 
 
 ### 설정 방법
 
-GitHub 저장소: [open-trading-api/MCP/Kis Trading MCP](https://github.com/koreainvestment/open-trading-api/tree/main/MCP/Kis%20Trading%20MCP)
-
-**요구사항:** Python 3.11+, [uv](https://docs.astral.sh/uv/), 한국투자증권 Open API 인증정보
-
-#### 1. Docker + SSE (권장, 모든 OS)
-
-상세 절차는 [KIS Trading MCP README](https://github.com/koreainvestment/open-trading-api/tree/main/MCP/Kis%20Trading%20MCP)를 참고하세요.
-
-1. Docker 이미지 빌드 및 컨테이너 실행 (`MCP_ACCESS_TOKEN` 설정)
-2. Claude Desktop에 `mcp-remote`로 `http://localhost:3000/sse` 연결
-
-```json
-{
-  "mcpServers": {
-    "kis-trade-mcp": {
-      "command": "npx",
-      "args": [
-        "-y", "mcp-remote",
-        "http://localhost:3000/sse",
-        "--header", "Authorization: Bearer your_strong_random_token"
-      ]
-    }
-  }
-}
-```
-
-#### 2. stdio 로컬 연동 (고급)
-
-Docker 없이 Claude Desktop·Cursor에 직접 연결합니다. Windows 사용자는 Docker 방식을 권장합니다.
-
-```json
-{
-  "mcpServers": {
-    "kis-trade-mcp": {
-      "command": "uv",
-      "args": [
-        "--directory", "{프로젝트 절대경로}/MCP/Kis Trading MCP",
-        "run", "python", "server.py"
-      ],
-      "env": {
-        "ENV": "live",
-        "MCP_TYPE": "stdio",
-        "KIS_APP_KEY": "your_app_key",
-        "KIS_APP_SECRET": "your_app_secret"
-      }
-    }
-  }
-}
-```
-
-> `MCP_TYPE=stdio`를 반드시 설정하세요. 상세 내용은 Trading MCP README의 [stdio 로컬 연동](https://github.com/koreainvestment/open-trading-api/tree/main/MCP/Kis%20Trading%20MCP) 섹션을 참고하세요.
+(9월 중 공개 예정)
 
 ## KIS Code Assistant MCP
 
