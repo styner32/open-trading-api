@@ -78,3 +78,33 @@ go run ./cmd
 ```
 
 `go run ./cmd` still performs live network/API work, so it requires valid credentials and reachable upstream endpoints.
+
+## KOSIS Stats & DART Filing Services
+
+This module also includes support for KOSIS statistics data and DART filing processing.
+
+### Run API Server & Workers
+
+- Run API server:
+  ```bash
+  go run ./cmd/dart-filing-api
+  ```
+- Run Worker:
+  ```bash
+  go run ./cmd/dart-filing-worker
+  ```
+- Dry Run CLI:
+  ```bash
+  RECEIPT_NUMBER=20260109900734 go run ./cmd/dart-filing-worker-cli
+  ```
+
+### Database Migrations
+
+Ensure your `DATABASE_URL` environment variable is set before running migrations.
+
+```bash
+make migrate-up
+make migrate-down
+make migrate-create NAME=migration_name
+```
+
