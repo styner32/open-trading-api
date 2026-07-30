@@ -35,4 +35,27 @@ var _ = Describe("Quotation analysis", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.IsOK()).To(BeTrue())
 	})
+
+	It("calculates 14-day RSI historical time-series correctly", func() {
+		dates := []string{
+			"20260701", "20260702", "20260703", "20260706", "20260707",
+			"20260708", "20260709", "20260710", "20260713", "20260714",
+			"20260715", "20260716", "20260717", "20260720", "20260721",
+			"20260722", "20260723", "20260724", "20260727", "20260728",
+		}
+		closes := []float64{
+			6500, 6520, 6490, 6530, 6550,
+			6540, 6580, 6600, 6590, 6620,
+			6650, 6630, 6680, 6700, 6670,
+			6690, 6720, 6690, 6755, 6052,
+		}
+
+		series, err := CalculateRSISeries(dates, closes, 14)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(series).To(HaveLen(6))
+		Expect(series[0].Date).To(Equal("20260721"))
+		Expect(series[0].RSI).To(BeNumerically(">", 0))
+		Expect(series[5].Date).To(Equal("20260728"))
+		Expect(series[5].Signal).NotTo(BeEmpty())
+	})
 })

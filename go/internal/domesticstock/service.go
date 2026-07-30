@@ -417,6 +417,108 @@ func calculateRSI(closes []float64, period int) (float64, error) {
 	return rsi, nil
 }
 
+type RSIPoint struct {
+	Date   string  `json:"date"`
+	Close  float64 `json:"close"`
+	RSI    float64 `json:"rsi"`
+	Signal string  `json:"signal"`
+}
+
+// CalculateRSISeries는 기본 Wilder 평활법으로 역사적 RSI 시계열을 도출합니다.
+func CalculateRSISeries(dates []string, closes []float64, period int) ([]RSIPoint, error) {
+	return CalculateRSISeriesWithMethod(dates, closes, period, "wilder")
+}
+
+// CalculateRSISeriesWithMethod는 산출 방식("wilder" 또는 "sma"/"cutler")을 선택하여 역사적 RSI 시계열을 도출합니다.
+func CalculateRSISeriesWithMethod(dates []string, closes []float64, period int, method string) ([]RSIPoint, error) {
+	if period <= 0 {
+		return nil, fmt.Errorf("period must be > 0")
+	}
+	if len(closes) <= period || len(closes) != len(dates) {
+		return nil, fmt.Errorf("insufficient or mismatched data: closes=%d, dates=%d, period=%d", len(closes), len(dates), period)
+	}
+
+	calcRSIVal := func(g, l float64) float64 {
+		if l == 0 {
+			if g == 0 {
+				return 50.0
+			}
+			return 100.0
+		}
+		rs := g / l
+		return 100.0 - (100.0 / (1.0 + rs))
+	}
+
+	var series []RSIPoint
+	method = strings.ToLower(strings.TrimSpace(method))
+
+	if method == "sma" || method == "cutler" {
+		for i := period; i < len(closes); i++ {
+			var gSum, lSum float64
+			for j := i - period + 1; j <= i; j++ {
+				delta := closes[j] - closes[j-1]
+				if delta > 0 {
+					gSum += delta
+				} else if delta < 0 {
+					lSum += -delta
+				}
+			}
+			avgG := gSum / float64(period)
+			avgL := lSum / float64(period)
+			rsiVal := calcRSIVal(avgG, avgL)
+
+			series = append(series, RSIPoint{
+				Date:   dates[i],
+				Close:  closes[i],
+				RSI:    math.Round(rsiVal*100) / 100,
+				Signal: rsiSignal(rsiVal),
+			})
+		}
+		return series, nil
+	}
+
+	// Default: Wilder's Exponential Smoothing
+	var gainSum, lossSum float64
+	for i := 1; i <= period; i++ {
+		delta := closes[i] - closes[i-1]
+		if delta > 0 {
+			gainSum += delta
+		} else if delta < 0 {
+			lossSum += -delta
+		}
+	}
+
+	avgGain := gainSum / float64(period)
+	avgLoss := lossSum / float64(period)
+
+	initRSI := calcRSIVal(avgGain, avgLoss)
+	series = append(series, RSIPoint{
+		Date:   dates[period],
+		Close:  closes[period],
+		RSI:    math.Round(initRSI*100) / 100,
+		Signal: rsiSignal(initRSI),
+	})
+
+	for i := period + 1; i < len(closes); i++ {
+		delta := closes[i] - closes[i-1]
+		gain := math.Max(delta, 0)
+		loss := math.Max(-delta, 0)
+
+		avgGain = ((avgGain * float64(period-1)) + gain) / float64(period)
+		avgLoss = ((avgLoss * float64(period-1)) + loss) / float64(period)
+
+		rsiVal := calcRSIVal(avgGain, avgLoss)
+		series = append(series, RSIPoint{
+			Date:   dates[i],
+			Close:  closes[i],
+			RSI:    math.Round(rsiVal*100) / 100,
+			Signal: rsiSignal(rsiVal),
+		})
+	}
+
+	return series, nil
+}
+
 func rsiSignal(rsi float64) string {
 	switch {
 	case rsi >= 70:

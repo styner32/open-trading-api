@@ -51,6 +51,24 @@ The Go module under [`go/`](/Users/sunjinlee/workspace/open-trading-api/go) is n
 3. Business-date-sensitive exports still use market-time-derived dates when available.
 4. KOSPI master, index futures master, quad witching snapshot, DCF Monte Carlo, and company analysis JSON exports keep their dated path rules.
 
+## Agent Report CLI Commands (`cmd/agent`)
+
+Detailed documentation for report subcommands is available in [`AGENT_CLI_GUIDE.md`](/Users/sunjinlee/workspace/open-trading-api/go/AGENT_CLI_GUIDE.md).
+
+```bash
+# Premarket vulnerability score board
+go run ./cmd/agent report premarket
+
+# RSI historical series engine with interval option (--interval 1d, 60m, 15m, 5m)
+go run ./cmd/agent report rsi --symbol kospi --period 14 --interval 60m
+
+# Real System Leverage (Credit Balance ÷ Customer Deposit) report
+go run ./cmd/agent report credit-balance --ratio --days 60
+
+# Safety Devices (Sidecar & Circuit Breaker) monitoring
+go run ./cmd/agent report safety-devices
+```
+
 ## Run And Test
 
 ```bash

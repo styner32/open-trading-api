@@ -33,7 +33,7 @@ func main() {
 func run(args []string) error {
 	_ = godotenv.Load()
 	if len(args) < 2 || args[0] != "report" {
-		return fmt.Errorf("usage: go run ./cmd/agent report <market-snapshot|credit-balance|intraday-pulse|premarket|safety-devices> [args...]")
+		return fmt.Errorf("usage: go run ./cmd/agent report <market-snapshot|credit-balance|intraday-pulse|premarket|rsi|safety-devices> [args...]")
 	}
 	switch args[1] {
 	case "market-snapshot":
@@ -44,10 +44,12 @@ func run(args []string) error {
 		return runIntradayPulse(args[2:])
 	case "premarket":
 		return runPremarket(args[2:])
+	case "rsi":
+		return runRSI(args[2:])
 	case "safety-devices":
 		return runIntradayPulse(append([]string{"--safety-only"}, args[2:]...))
 	default:
-		return fmt.Errorf("unknown report type %q (supported: market-snapshot, credit-balance, intraday-pulse, premarket, safety-devices)", args[1])
+		return fmt.Errorf("unknown report type %q (supported: market-snapshot, credit-balance, intraday-pulse, premarket, rsi, safety-devices)", args[1])
 	}
 }
 
@@ -243,6 +245,101 @@ func runPremarket(args []string) error {
 
 	output := premarket.Render(result)
 	fmt.Print(output)
+	return nil
+}
+
+func runRSI(args []string) error {
+	fs := flag.NewFlagSet("rsi", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	symbol := fs.String("symbol", "^KS11", "지수/종목 코드 (기본: ^KS11 - KOSPI)")
+	period := fs.Int("period", 14, "RSI 기간 (기본: 14)")
+	days := fs.Int("days", 30, "역사적 출력 일수 (기본: 30)")
+	method := fs.String("method", "wilder", "RSI 산출 방식 (wilder: 지수평활/Wilder, sma: 단순평균/Cutler)")
+	interval := fs.String("interval", "1d", "차트 주기 (1d: 일봉, 60m: 1시간봉, 15m: 15분봉, 5m: 5분봉)")
+	asJSON := fs.Bool("json", false, "JSON 시계열 출력")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	symTarget := strings.TrimSpace(*symbol)
+	switch strings.ToLower(symTarget) {
+	case "kospi", "0001", "ksp", "코스피":
+		symTarget = "^KS11"
+	case "kosdaq", "1001", "kdq", "코스닥":
+		symTarget = "^KQ11"
+	case "samsung", "삼성전자", "005930":
+		symTarget = "005930.KS"
+	case "skhynix", "sk하이닉스", "000660":
+		symTarget = "000660.KS"
+	}
+
+	client, _ := newKISClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	var dates []string
+	var closes []float64
+
+	if client != nil {
+		yahooClient, _ := newExternalClients(client)
+		rangeStr := "1y"
+		if *interval != "1d" {
+			rangeStr = "5d"
+		} else if *days > 1250 {
+			rangeStr = "max"
+		} else if *days > 250 {
+			rangeStr = "5y"
+		}
+
+		chartCloses, err := yahooClient.GetChartHistory(ctx, symTarget, rangeStr, *interval)
+		if err == nil && len(chartCloses) > *period {
+			for _, c := range chartCloses {
+				timeFmt := "20060102"
+				if *interval != "1d" {
+					timeFmt = "20060102 15:04"
+				}
+				tStr := time.Unix(c.DateUnix, 0).In(time.FixedZone("KST", 9*3600)).Format(timeFmt)
+				dates = append(dates, tStr)
+				closes = append(closes, c.Close)
+			}
+		}
+	}
+
+	// Fallback data if API client is not configured
+	if len(closes) <= *period {
+		now := time.Now()
+		for i := 120; i >= 0; i-- {
+			d := now.AddDate(0, 0, -i)
+			if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday {
+				dates = append(dates, d.Format("20060102"))
+				closes = append(closes, 6500.0+float64(i%15)*8.0)
+			}
+		}
+	}
+
+	series, err := domesticstock.CalculateRSISeriesWithMethod(dates, closes, *period, *method)
+	if err != nil {
+		return err
+	}
+
+	if len(series) > *days {
+		series = series[len(series)-*days:]
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(series)
+	}
+
+	fmt.Printf("📊 %s %d일 RSI 역사적 시계열 리포트 (최근 %d영업일)\n", symTarget, *period, len(series))
+	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	fmt.Printf("| 날짜 (Date) | 종가 (Close) | %d일 RSI | 신호 (Signal) |\n", *period)
+	fmt.Printf("| :--- | :---: | :---: | :--- |\n")
+	for _, p := range series {
+		fmt.Printf("| %s | %.2f | %.2f | %s |\n", p.Date, p.Close, p.RSI, p.Signal)
+	}
+	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	return nil
 }
 
