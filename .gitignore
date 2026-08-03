@@ -94,9 +94,6 @@ ENV/
 env/
 env.bak/
 venv.bak/
-go/.auth_token.json
-go/.cache/
-go/bin/
 
 # ===== uv =====
 .python-version
@@ -142,7 +139,11 @@ next-env.d.ts
 .env
 .env.local
 .env.*.local
+.env.docker
+.env.test
 *.pem
+.env.docker
+
 
 # ===== Logs =====
 *.log
@@ -179,8 +180,3 @@ backtester/examples/output/*.py
 settings.local.json
 
 .serena/
-*_logs/
-
-kis_devlp.yaml
-
-.DS_Store

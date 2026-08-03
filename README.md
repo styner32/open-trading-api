@@ -397,8 +397,6 @@ docker images | grep lean # Lean 이미지 확인 (첫 실행 시 자동 다운�
 모의투자 계좌는 REST API 호출 제한이 낮습니다.
 단일 조회에는 문제없으나, 파라미터 최적화처럼 연속 호출이 많으면 실전투자 계좌를 권장합니다.
 
----
-
 # 📧 문의사항
 
 - [💬 한국투자증권 Open API 챗봇](https://chatgpt.com/g/g-68b920ee7afc8191858d3dc05d429571-hangugtujajeunggweon-open-api-seobiseu-gpts)에 언제든 궁금한 점을 물어보세요.
