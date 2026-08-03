@@ -1,3 +1,28 @@
+# Jules Sentinel Rules & Scope Guidelines
+
+## Primary Workspace Scope
+
+- **Target Directory**: `go/`
+- **Scope Restriction**: ALL code inspection, research, file reading, and modifications MUST be restricted exclusively to the `go/` directory.
+
+## Guidelines & Constraints
+
+1. **Target Subdirectories**:
+   - `go/cmd/` (CLI & application entrypoints)
+   - `go/internal/` (Core logic, DART filing, DCF engine, domestic stock/futures modules)
+   - `go/web/` (React + Vite Web Frontend)
+   - `go/Makefile` & `go/README.md`
+2. **Exclusion Rule**: Do NOT inspect, read, or modify files outside the `go/` directory (such as Python scripts in `examples_llm/`, `examples_user/`, `strategy_builder/`, `backtester/`, etc.) unless explicitly instructed by the user.
+3. **Repository Rules & Architecture**:
+   - Preserve business-date-scoped cache filenames (`.cache/kospi_code.<YYYYMMDD>.mst`, `.cache/fo_idx_code_mts.<YYYYMMDD>.mst`).
+   - Preserve JSON sidecars for master cache files.
+   - Maintain distinction between `exact`, `derived`, and `assumed` tiers in DCF engine calculations.
+   - Ensure all Go tests (`go test ./...`) pass cleanly when modifying Go packages.
+
+---
+
+# Security Audit Log & Learnings
+
 ## 2024-05-18 - [Overly Permissive CORS Configuration]
 
 **Vulnerability:** The API allowed `Access-Control-Allow-Origin: *` while simultaneously setting `Access-Control-Allow-Credentials: true`. This combination is a security risk as it allows any origin to make authenticated cross-origin requests using the user's credentials, potentially exposing sensitive data.
@@ -31,3 +56,4 @@
 **Vulnerability:** Usage of the default `http.Get` which implicitly uses `http.DefaultClient`. The default client lacks a timeout. If the external server hangs, connections can stay open indefinitely leading to goroutine leaks and resource exhaustion (DoS).
 **Learning:** Default HTTP clients in Go are unsuitable for production code when interacting with external networks. Timeouts must always be explicitly configured.
 **Prevention:** Always instantiate a custom `http.Client` with an explicit `Timeout` (e.g., `client := &http.Client{Timeout: 10 * time.Second}`) instead of relying on package-level HTTP functions.
+

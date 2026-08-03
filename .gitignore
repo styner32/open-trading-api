@@ -139,8 +139,11 @@ next-env.d.ts
 .env
 .env.local
 .env.*.local
+.env.docker
+.env.test
 *.pem
 .env.docker
+
 
 # ===== Logs =====
 *.log
